@@ -69,15 +69,46 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_QUERY_STATE -> {
-                publishState(currentState, currentError)
-                if (!recording && currentState != RecordingLifecycleState.PREPARING &&
-                    currentState != RecordingLifecycleState.STOPPING) {
+                if (!recording && currentState in setOf(
+                        RecordingLifecycleState.PREPARING,
+                        RecordingLifecycleState.RECORDING,
+                        RecordingLifecycleState.STOPPING
+                    )
+                ) {
+                    recoverInterruptedSegments(this)
+                    publishState(
+                        RecordingLifecycleState.INTERRUPTED,
+                        "The recording service is no longer active. Any unfinished audio segment was marked incomplete."
+                    )
+                } else {
+                    publishState(currentState, currentError)
+                }
+                if (!recording) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf(startId)
                 }
                 return START_NOT_STICKY
             }
             ACTION_STOP -> {
-                stopRecordingNormally()
+                if (recording) {
+                    stopRecordingNormally()
+                } else {
+                    if (currentState in setOf(
+                            RecordingLifecycleState.PREPARING,
+                            RecordingLifecycleState.RECORDING,
+                            RecordingLifecycleState.STOPPING
+                        )
+                    ) {
+                        recoverInterruptedSegments(this)
+                        publishState(
+                            RecordingLifecycleState.INTERRUPTED,
+                            "Stop was received after the recorder stopped unexpectedly. Any unfinished segment was marked incomplete."
+                        )
+                    } else {
+                        publishState(currentState, currentError)
+                    }
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                }
                 stopSelf()
                 return START_NOT_STICKY
             }

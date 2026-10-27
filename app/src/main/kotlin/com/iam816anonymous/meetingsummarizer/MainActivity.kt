@@ -20,6 +20,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import android.media.MediaPlayer
+import java.io.File
+import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.data.DemoMeetingRepository
 import com.iam816anonymous.meetingsummarizer.workflow.MeetingScreenState
 import com.iam816anonymous.meetingsummarizer.workflow.MeetingWorkflowAction
@@ -37,14 +41,24 @@ class MainActivity : Activity() {
     private var recordingStatus = "NOT RECORDING"
     private var recordingError: String? = null
     private var receiverRegistered = false
+    private var showRecordings = false
+    private var currentSessionId: String? = null
+    private var mediaPlayer: MediaPlayer? = null
+    private var currentlyPlaying: File? = null
 
     private val recordingStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != RecordingService.ACTION_STATE) return
             recordingStatus = intent.getStringExtra(RecordingService.EXTRA_STATE) ?: recordingStatus
             recordingError = intent.getStringExtra(RecordingService.EXTRA_ERROR)
+            currentSessionId = intent.getStringExtra(RecordingService.EXTRA_SESSION_ID) ?: currentSessionId
             recordingActive = recordingStatus == RecordingLifecycleState.RECORDING.name ||
-                recordingStatus == RecordingLifecycleState.STOPPING.name
+                recordingStatus == RecordingLifecycleState.STOPPING.name ||
+                recordingStatus == RecordingLifecycleState.PREPARING.name
+            if (recordingStatus == RecordingLifecycleState.COMPLETED.name) {
+                recordingError = null
+                showRecordings = false
+            }
             render()
         }
     }
@@ -75,6 +89,11 @@ class MainActivity : Activity() {
             receiverRegistered = false
         }
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        stopPlayback()
+        super.onDestroy()
     }
 
     private fun confirmAndStartRecording() {
@@ -143,10 +162,25 @@ class MainActivity : Activity() {
         addHeader(content)
         addSpace(content, 22)
 
-        when (workflowState.screen) {
-            MeetingScreenState.IDLE -> renderHome(content)
-            MeetingScreenState.DEMO_ACTIVE -> renderDemoActive(content)
-            MeetingScreenState.RESULTS_READY -> renderResults(content)
+        if (showRecordings) {
+            renderRecordings(content)
+        } else {
+            when (workflowState.screen) {
+                MeetingScreenState.IDLE -> renderHome(content)
+                MeetingScreenState.DEMO_ACTIVE -> renderDemoActive(content)
+                MeetingScreenState.RESULTS_READY -> renderResults(content)
+            }
+        }
+        if (!recordingActive && recordingStatus == RecordingLifecycleState.COMPLETED.name && !showRecordings) {
+            addSpace(content, 16)
+            val saved = card(content, COLOR_TINT)
+            addText(saved, "Recording saved", 19f, COLOR_PRIMARY_DARK, true)
+            addSpace(saved, 6)
+            val files = latestRecordingFiles()
+            val totalBytes = files.sumOf { it.length() }
+            addText(saved, if (files.isNotEmpty() && totalBytes > 0L) "${files.size} audio segment(s) · ${formatBytes(totalBytes)} stored on this device." else "The stop action completed, but no non-empty audio segment was found. Please record a short test again.", 13f, COLOR_TEXT)
+            addSpace(saved, 10)
+            addButton(saved, "View recordings", true) { showRecordings = true; render() }
         }
         if (recordingActive && workflowState.screen != MeetingScreenState.IDLE) {
             addSpace(content, 18)
@@ -233,6 +267,8 @@ class MainActivity : Activity() {
             workflowState = MeetingWorkflowReducer.reduce(workflowState, MeetingWorkflowAction.OpenSampleResults)
             render()
         }
+        addSpace(hero, 10)
+        addButton(hero, "View recordings", false) { showRecordings = true; render() }
 
         addSpace(parent, 20)
         addText(parent, "WHAT YOU'LL GET", 12f, COLOR_MUTED, true)
@@ -344,6 +380,98 @@ class MainActivity : Activity() {
             )
             render()
         }
+    }
+
+
+    private fun renderRecordings(parent: LinearLayout) {
+        addText(parent, "Saved recordings", 29f, COLOR_TEXT, true)
+        addSpace(parent, 6)
+        addText(parent, "Audio stays on this device. Tap Play to verify a saved segment.", 14f, COLOR_MUTED)
+        addSpace(parent, 16)
+        val root = File(filesDir, "recordings")
+        val sessions = root.listFiles()?.filter { it.isDirectory }?.sortedByDescending { it.lastModified() }.orEmpty()
+        if (sessions.isEmpty()) {
+            val empty = card(parent, COLOR_SURFACE)
+            addText(empty, "No recordings found yet", 18f, COLOR_TEXT, true)
+            addSpace(empty, 6)
+            addText(empty, "Start a real recording, speak for at least 30 seconds, then stop it. Completed audio will appear here.", 13f, COLOR_MUTED)
+        } else {
+            sessions.forEach { session ->
+                val sessionCard = card(parent, COLOR_SURFACE)
+                addText(sessionCard, session.name, 16f, COLOR_TEXT, true)
+                addSpace(sessionCard, 6)
+                val audioFiles = session.listFiles()?.filter { it.isFile && it.extension.equals("m4a", true) }?.sortedBy { it.name }.orEmpty()
+                if (audioFiles.isEmpty()) {
+                    addText(sessionCard, "No audio segment found.", 13f, COLOR_MUTED)
+                } else {
+                    audioFiles.forEach { audio ->
+                        val metadata = readMetadata(audio)
+                        val status = metadata.getProperty("status", "UNVERIFIED")
+                        addSpace(sessionCard, 8)
+                        addText(sessionCard, audio.name + " · " + formatBytes(audio.length()), 14f, COLOR_TEXT, true)
+                        addText(sessionCard, "Status: " + status, 12f, if (status == "COMPLETE") COLOR_PRIMARY_DARK else COLOR_WARNING)
+                        if (audio.length() > 0L) {
+                            addSpace(sessionCard, 6)
+                            addButton(sessionCard, if (currentlyPlaying == audio && mediaPlayer?.isPlaying == true) "Stop playback" else "Play audio", false) {
+                                if (currentlyPlaying == audio && mediaPlayer?.isPlaying == true) {
+                                    stopPlayback()
+                                    render()
+                                } else {
+                                    playAudio(audio)
+                                }
+                            }
+                        }
+                    }
+                }
+                addSpace(parent, 10)
+            }
+        }
+        addSpace(parent, 12)
+        addButton(parent, "Refresh recordings", false) { render() }
+        addSpace(parent, 8)
+        addButton(parent, "Back to home", true) { showRecordings = false; render() }
+    }
+
+    private fun latestRecordingFiles(): List<File> {
+        val root = File(filesDir, "recordings")
+        val session = currentSessionId?.let { File(root, it) }
+        return session?.listFiles()?.filter { it.isFile && it.extension.equals("m4a", true) }.orEmpty()
+    }
+
+    private fun readMetadata(audio: File): Properties = Properties().apply {
+        val meta = File(audio.parentFile, audio.name + ".meta")
+        if (meta.isFile) runCatching { meta.inputStream().use { load(it) } }
+    }
+
+    private fun playAudio(file: File) {
+        stopPlayback()
+        try {
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener { stopPlayback(); if (!isFinishing) render() }
+                prepare()
+                start()
+            }
+            currentlyPlaying = file
+            Toast.makeText(this, "Playing " + file.name, Toast.LENGTH_SHORT).show()
+            render()
+        } catch (error: Exception) {
+            stopPlayback()
+            Toast.makeText(this, "Could not play audio: " + (error.message ?: "unknown error"), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun stopPlayback() {
+        runCatching { mediaPlayer?.stop() }
+        runCatching { mediaPlayer?.release() }
+        mediaPlayer = null
+        currentlyPlaying = null
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024L -> "%.1f KB".format(bytes / 1024.0)
+        else -> "%.2f MB".format(bytes / (1024.0 * 1024.0))
     }
 
     private fun addFeatureCard(parent: LinearLayout, number: String, title: String, body: String) {
