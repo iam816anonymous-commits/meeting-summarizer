@@ -10,7 +10,8 @@ Phase 3 adds explicit, user-initiated microphone capture with a microphone foreg
 - Five-minute M4A/AAC segments stored in app-private filesDir/recordings.
 - Segment metadata sidecars written through a temporary file and rename; finalized segments include timestamps, byte size, and SHA-256 when available.
 - 50 MB free-space guard before start and each segment rotation.
-- A segment is marked COMPLETE only when MediaRecorder.stop() succeeds and a non-empty file exists. A segment left in RECORDING state is recovered as INCOMPLETE on next launch.
+- A segment is marked COMPLETE only when MediaRecorder.stop() succeeds, a non-empty file exists, and its metadata sidecar is persisted successfully. Metadata persistence failure is surfaced as an unsuccessful finalization rather than silently treated as success. A segment left in RECORDING state is recovered as INCOMPLETE on next launch.
+- Recording state is persisted locally and refreshed when the activity returns to the foreground, avoiding a stale recording indicator after notification actions or backgrounding.
 - Pure lifecycle reducer tests cover start, duplicate start, successful/failed stop, interruption and fatal error.
 
 ## Verification
