@@ -253,6 +253,7 @@ class RecordingService : Service() {
             finishCurrentSegment(markComplete = false)
             publishState(RecordingLifecycleState.INTERRUPTED, "Recording service ended unexpectedly; the current segment is marked incomplete.")
         }
+        removeRecordingNotification()
         super.onDestroy()
     }
 
