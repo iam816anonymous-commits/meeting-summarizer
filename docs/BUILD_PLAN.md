@@ -1,6 +1,6 @@
 # Meeting Summarizer Agent — Research and Phase-by-Phase Build Plan
 
-**Status:** Phase 0 specification freeze in progress; implementation proceeds phase by phase after the Phase 0 audit  
+**Status:** Phase 0 specification batch committed; Phase 1 Android foundation and CI in progress  
 **Target:** Android app that lives on the phone, starts/stops recording only on the user's command, transcribes meetings offline, produces a useful summary, and highlights only items relevant to the user.  
 **Primary principle:** Offline-first, privacy-first, small-device-aware. Network AI is an optional enhancement, never a dependency for core meeting capture or saved data.
 

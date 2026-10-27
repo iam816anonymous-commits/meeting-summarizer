@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Meeting Summarizer</string>
+    <string name="foundation_message">Meeting Summarizer
+Phase 1 foundation</string>
+</resources>
