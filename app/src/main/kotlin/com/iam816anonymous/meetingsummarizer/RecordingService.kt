@@ -84,7 +84,7 @@ class RecordingService : Service() {
                     publishState(currentState, currentError)
                 }
                 if (!recording) {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    removeRecordingNotification()
                     stopSelf(startId)
                 }
                 return START_NOT_STICKY
@@ -107,7 +107,7 @@ class RecordingService : Service() {
                     } else {
                         publishState(currentState, currentError)
                     }
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    removeRecordingNotification()
                 }
                 stopSelf()
                 return START_NOT_STICKY
@@ -123,7 +123,7 @@ class RecordingService : Service() {
                     beginRecording()
                 } catch (error: Exception) {
                     publishState(RecordingLifecycleState.ERROR, error.message ?: error.javaClass.simpleName)
-                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    removeRecordingNotification()
                     stopSelf()
                 }
             }
@@ -234,7 +234,7 @@ class RecordingService : Service() {
         } else {
             publishState(RecordingLifecycleState.INTERRUPTED, "The final audio segment could not be finalized. Earlier completed segments remain available.")
         }
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        removeRecordingNotification()
     }
 
     private fun failAndStop(message: String) {
@@ -242,7 +242,7 @@ class RecordingService : Service() {
         handler.removeCallbacks(rotateSegment)
         finishCurrentSegment(markComplete = false)
         publishState(RecordingLifecycleState.ERROR, message)
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        removeRecordingNotification()
         stopSelf()
     }
 
@@ -253,7 +253,18 @@ class RecordingService : Service() {
             finishCurrentSegment(markComplete = false)
             publishState(RecordingLifecycleState.INTERRUPTED, "Recording service ended unexpectedly; the current segment is marked incomplete.")
         }
+        removeRecordingNotification()
         super.onDestroy()
+    }
+
+    /**
+     * Remove the foreground-service notification explicitly as well as detaching it.
+     * This makes cleanup idempotent across the in-app stop action, notification action,
+     * query-state recovery, startup failure, and service destruction.
+     */
+    private fun removeRecordingNotification() {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
     }
 
     private fun hasEnoughStorage(): Boolean = try {
