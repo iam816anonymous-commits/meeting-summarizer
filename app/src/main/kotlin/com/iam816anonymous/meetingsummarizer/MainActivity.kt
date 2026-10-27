@@ -65,6 +65,8 @@ class MainActivity : Activity() {
             registerReceiver(recordingStateReceiver, filter)
         }
         receiverRegistered = true
+        // Refresh state after registering so returning from the background cannot leave stale UI.
+        startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_QUERY_STATE))
     }
 
     override fun onStop() {
@@ -145,6 +147,15 @@ class MainActivity : Activity() {
             MeetingScreenState.IDLE -> renderHome(content)
             MeetingScreenState.DEMO_ACTIVE -> renderDemoActive(content)
             MeetingScreenState.RESULTS_READY -> renderResults(content)
+        }
+        if (recordingActive && workflowState.screen != MeetingScreenState.IDLE) {
+            addSpace(content, 18)
+            val activeRecording = card(content, COLOR_PRIMARY_DARK)
+            addText(activeRecording, "● RECORDING · " + recordingStatus, 13f, 0xFFFFD4A3.toInt(), true)
+            addSpace(activeRecording, 8)
+            addText(activeRecording, "Microphone capture is active. Audio is saved locally on this device.", 13f, COLOR_WHITE)
+            addSpace(activeRecording, 10)
+            addButton(activeRecording, "Stop recording", true) { stopRecordingService() }
         }
 
         addSpace(content, 20)
@@ -260,7 +271,7 @@ class MainActivity : Activity() {
             render()
         }
         addSpace(parent, 12)
-        addText(parent, "In Phase 3, this control will be connected to the real recording lifecycle and a persistent Android notification.", 13f, COLOR_MUTED)
+        addText(parent, "This demo does not use the microphone. Any real recording remains separately controlled by the recording panel and notification.", 13f, COLOR_MUTED)
     }
 
     private fun renderResults(parent: LinearLayout) {

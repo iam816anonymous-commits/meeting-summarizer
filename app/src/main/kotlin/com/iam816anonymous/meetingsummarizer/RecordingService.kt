@@ -31,6 +31,18 @@ class RecordingService : Service() {
     private var segmentNumber = 0
     private var sessionId: String? = null
     private var recording = false
+    private var currentState = RecordingLifecycleState.IDLE
+    private var currentError: String? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        val saved = getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+        currentState = runCatching {
+            RecordingLifecycleState.valueOf(saved.getString(KEY_STATE, RecordingLifecycleState.IDLE.name)!!)
+        }.getOrDefault(RecordingLifecycleState.IDLE)
+        currentError = saved.getString(KEY_ERROR, null)
+        sessionId = saved.getString(KEY_SESSION_ID, null)
+    }
 
     private val rotateSegment = object : Runnable {
         override fun run() {
@@ -56,6 +68,14 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_QUERY_STATE -> {
+                publishState(currentState, currentError)
+                if (!recording && currentState != RecordingLifecycleState.PREPARING &&
+                    currentState != RecordingLifecycleState.STOPPING) {
+                    stopSelf(startId)
+                }
+                return START_NOT_STICKY
+            }
             ACTION_STOP -> {
                 stopRecordingNormally()
                 stopSelf()
@@ -102,8 +122,8 @@ class RecordingService : Service() {
             if (!exists() && !mkdirs()) throw IllegalStateException("Could not create private recording directory.")
         }
         segmentNumber = 0
-        recording = true
         startSegment()
+        recording = true
         handler.postDelayed(rotateSegment, SEGMENT_LENGTH_MS)
         publishState(RecordingLifecycleState.RECORDING)
     }
@@ -115,7 +135,10 @@ class RecordingService : Service() {
         val file = File(directory, "segment-%04d.m4a".format(segmentNumber))
         currentAudioFile = file
         currentSegmentStartedAt = System.currentTimeMillis()
-        writeMetadata(file, "RECORDING", currentSegmentStartedAt, null, null, null)
+        if (!writeMetadata(file, "RECORDING", currentSegmentStartedAt, null, null, null)) {
+            currentAudioFile = null
+            throw IllegalStateException("Could not persist audio segment metadata.")
+        }
 
         val next = MediaRecorder()
         try {
@@ -156,7 +179,7 @@ class RecordingService : Service() {
         val validFile = audioFile.isFile && audioFile.length() > 0L
         val complete = markComplete && stopped && validFile
         val checksum = if (validFile) sha256(audioFile) else null
-        writeMetadata(
+        val metadataSaved = writeMetadata(
             audioFile,
             if (complete) "COMPLETE" else "INCOMPLETE",
             currentSegmentStartedAt,
@@ -165,7 +188,8 @@ class RecordingService : Service() {
             if (complete) null else "Recorder did not finalize a valid segment."
         )
         currentAudioFile = null
-        return complete || !markComplete
+        // Never report a segment as safely finalized when its integrity sidecar could not be saved.
+        return (complete && metadataSaved) || !markComplete
     }
 
     private fun stopRecordingNormally() {
@@ -214,7 +238,7 @@ class RecordingService : Service() {
         endedAt: Long?,
         checksum: String?,
         error: String?
-    ) {
+    ): Boolean {
         val values = Properties().apply {
             setProperty("sessionId", sessionId ?: "unknown")
             setProperty("segment", audioFile.name)
@@ -229,10 +253,12 @@ class RecordingService : Service() {
         val temporary = File(audioFile.parentFile, audioFile.name + ".meta.tmp")
         try {
             temporary.outputStream().use { values.store(it, "Meeting Summarizer audio segment metadata") }
-            if (target.exists()) target.delete()
+            if (target.exists() && !target.delete()) throw IllegalStateException("Could not replace segment metadata.")
             if (!temporary.renameTo(target)) throw IllegalStateException("Could not atomically write segment metadata.")
+            true
         } catch (_: Exception) {
             // Missing sidecars are unverified, never implicitly complete.
+            false
         }
     }
 
@@ -287,6 +313,13 @@ class RecordingService : Service() {
     }
 
     private fun publishState(state: RecordingLifecycleState, error: String? = null) {
+        currentState = state
+        currentError = error
+        getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_STATE, state.name)
+            .putString(KEY_ERROR, error)
+            .putString(KEY_SESSION_ID, sessionId)
+            .apply()
         sendBroadcast(Intent(ACTION_STATE).setPackage(packageName).apply {
             putExtra(EXTRA_STATE, state.name)
             if (error != null) putExtra(EXTRA_ERROR, error)
@@ -297,10 +330,15 @@ class RecordingService : Service() {
     companion object {
         const val ACTION_START = "com.iam816anonymous.meetingsummarizer.action.START_RECORDING"
         const val ACTION_STOP = "com.iam816anonymous.meetingsummarizer.action.STOP_RECORDING"
+        const val ACTION_QUERY_STATE = "com.iam816anonymous.meetingsummarizer.action.QUERY_RECORDING_STATE"
         const val ACTION_STATE = "com.iam816anonymous.meetingsummarizer.action.RECORDING_STATE"
         const val EXTRA_STATE = "recording_state"
         const val EXTRA_ERROR = "recording_error"
         const val EXTRA_SESSION_ID = "recording_session_id"
+        private const val STATE_PREFS = "recording_state"
+        private const val KEY_STATE = "state"
+        private const val KEY_ERROR = "error"
+        private const val KEY_SESSION_ID = "session_id"
         private const val CHANNEL_ID = "meeting_recording"
         private const val NOTIFICATION_ID = 4201
         private const val RECORDINGS_DIRECTORY = "recordings"
