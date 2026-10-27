@@ -3,4 +3,5 @@
     <string name="app_name">Meeting Summarizer</string>
     <string name="foundation_message">Meeting Summarizer
 Phase 1 foundation</string>
+    <string name="demo_notice">Demo only — microphone is not being used.</string>
 </resources>

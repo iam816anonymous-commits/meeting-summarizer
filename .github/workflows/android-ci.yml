@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble debug APK and run lint
+    name: Unit tests, APK assembly and lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -49,6 +49,9 @@ jobs:
           java -version
           gradle --version
           adb version
+
+      - name: Run unit tests
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
 
       - name: Assemble debug APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
