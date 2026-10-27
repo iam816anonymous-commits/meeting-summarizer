@@ -24,6 +24,8 @@ class SherpaOnnxEnglishSpeechEngine : SpeechEngine {
         audioFile: File,
         sessionId: String,
         modelDirectory: File,
+        sequenceOffset: Long,
+        timeOffsetMs: Long,
         onSegment: (TranscriptSegment) -> Unit
     ): SpeechEngineResult {
         if (!audioFile.isFile || audioFile.length() <= 0L) {
@@ -76,9 +78,9 @@ class SherpaOnnxEnglishSpeechEngine : SpeechEngine {
                     onSegment(
                         TranscriptSegment(
                             sessionId = sessionId,
-                            sequence = count,
-                            startMs = startMs,
-                            endMs = endMs,
+                            sequence = sequenceOffset + count,
+                            startMs = timeOffsetMs + startMs,
+                            endMs = timeOffsetMs + endMs,
                             text = text
                         )
                     )
