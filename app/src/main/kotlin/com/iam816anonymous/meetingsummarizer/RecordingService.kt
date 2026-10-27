@@ -251,7 +251,7 @@ class RecordingService : Service() {
         }
         val target = File(audioFile.parentFile, audioFile.name + ".meta")
         val temporary = File(audioFile.parentFile, audioFile.name + ".meta.tmp")
-        try {
+        return try {
             temporary.outputStream().use { values.store(it, "Meeting Summarizer audio segment metadata") }
             if (target.exists() && !target.delete()) throw IllegalStateException("Could not replace segment metadata.")
             if (!temporary.renameTo(target)) throw IllegalStateException("Could not atomically write segment metadata.")
