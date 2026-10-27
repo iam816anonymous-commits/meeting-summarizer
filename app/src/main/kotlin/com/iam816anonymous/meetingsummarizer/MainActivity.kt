@@ -1,6 +1,14 @@
 package com.iam816anonymous.meetingsummarizer
 
+import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -24,10 +32,99 @@ import com.iam816anonymous.meetingsummarizer.workflow.MeetingWorkflowState
 class MainActivity : Activity() {
     private val demoRepository = DemoMeetingRepository()
     private var workflowState = MeetingWorkflowState()
+    private var recordingActive = false
+    private var recordingStatus = "NOT RECORDING"
+    private var recordingError: String? = null
+    private var receiverRegistered = false
+
+    private val recordingStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != RecordingService.ACTION_STATE) return
+            recordingStatus = intent.getStringExtra(RecordingService.EXTRA_STATE) ?: recordingStatus
+            recordingError = intent.getStringExtra(RecordingService.EXTRA_ERROR)
+            recordingActive = recordingStatus == RecordingLifecycleState.RECORDING.name ||
+                recordingStatus == RecordingLifecycleState.STOPPING.name
+            render()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RecordingService.recoverInterruptedSegments(this)
         render()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(RecordingService.ACTION_STATE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(recordingStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(recordingStateReceiver, filter)
+        }
+        receiverRegistered = true
+    }
+
+    override fun onStop() {
+        if (receiverRegistered) {
+            unregisterReceiver(recordingStateReceiver)
+            receiverRegistered = false
+        }
+        super.onStop()
+    }
+
+    private fun confirmAndStartRecording() {
+        AlertDialog.Builder(this)
+            .setTitle("Before you record")
+            .setMessage(
+                "Recording captures nearby room audio using this phone's microphone. " +
+                    "Tell participants and obtain any consent or authorization required for this meeting. " +
+                    "Audio is stored locally on this device. Recording starts only after you confirm and grant microphone permission."
+            )
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Continue") { _, _ ->
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_MICROPHONE)
+                } else {
+                    startRecordingService()
+                }
+            }
+            .show()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_MICROPHONE) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                startRecordingService()
+            } else {
+                recordingError = "Microphone permission was denied. Nothing was recorded."
+                render()
+            }
+        }
+    }
+
+    private fun startRecordingService() {
+        recordingError = null
+        val intent = Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_START)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            recordingStatus = RecordingLifecycleState.PREPARING.name
+            render()
+        } catch (error: Exception) {
+            recordingError = "Could not start recording: " + (error.message ?: error.javaClass.simpleName)
+            recordingStatus = RecordingLifecycleState.ERROR.name
+            render()
+        }
+    }
+
+    private fun stopRecordingService() {
+        startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_STOP))
     }
 
     private fun render() {
@@ -50,7 +147,7 @@ class MainActivity : Activity() {
         }
 
         addSpace(content, 20)
-        addText(content, "PHASE 2 PROTOTYPE · NO MICROPHONE ACCESS", 11f, COLOR_MUTED, true, Gravity.CENTER)
+        addText(content, "PHASE 3 · EXPLICIT, LOCAL MICROPHONE RECORDING", 11f, COLOR_MUTED, true, Gravity.CENTER)
         setContentView(scroll)
     }
 
@@ -98,7 +195,19 @@ class MainActivity : Activity() {
         addSpace(hero, 10)
         addText(hero, "Capture first. Understand next.", 22f, COLOR_WHITE, true)
         addSpace(hero, 8)
-        addText(hero, "The real recording engine comes in Phase 3. For now, explore the screen flow with clearly labelled sample data.", 14f, 0xFFE6E4FF.toInt())
+        addText(hero, "Start a real local recording when you are ready. You remain in control, and a persistent notification provides a stop action.", 14f, 0xFFE6E4FF.toInt())
+        addSpace(hero, 18)
+        if (recordingActive) {
+            addText(hero, "● RECORDING · " + recordingStatus, 13f, 0xFFFFD4A3.toInt(), true)
+            addSpace(hero, 10)
+            addButton(hero, "Stop recording", true) { stopRecordingService() }
+        } else {
+            addButton(hero, "Start real recording", true) { confirmAndStartRecording() }
+        }
+        if (recordingError != null) {
+            addSpace(hero, 8)
+            addText(hero, recordingError!!, 13f, 0xFFFFC7C7.toInt())
+        }
         addSpace(hero, 18)
         addButton(hero, "Start demo session", true) {
             workflowState = MeetingWorkflowReducer.reduce(
@@ -122,7 +231,7 @@ class MainActivity : Activity() {
         val notice = card(parent, COLOR_SURFACE_ALT)
         addText(notice, "Privacy by default", 16f, COLOR_TEXT, true)
         addSpace(notice, 5)
-        addText(notice, "This prototype does not ask for microphone permission, record audio, or send data to a server.", 13f, COLOR_MUTED)
+        addText(notice, "Recording requires your explicit confirmation and microphone permission. Audio segments stay in app-private storage; no audio is uploaded.", 13f, COLOR_MUTED)
     }
 
     private fun renderDemoActive(parent: LinearLayout) {
@@ -352,5 +461,6 @@ class MainActivity : Activity() {
         const val COLOR_WHITE = 0xFFFFFFFF.toInt()
         const val COLOR_WARNING = 0xFF8A4D00.toInt()
         const val COLOR_WARNING_TINT = 0xFFFFE8C5.toInt()
+        const val REQUEST_MICROPHONE = 3001
     }
 }
