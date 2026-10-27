@@ -463,6 +463,24 @@ class MainActivity : Activity() {
                             }
                         }
                     }
+                    val completeAudio = audioFiles.filter {
+                        it.isFile && it.length() > 0L && readMetadata(it).getProperty("status") == "COMPLETE"
+                    }
+                    val savedSegments = runCatching { getTranscriptStore().listSegments(session.name) }.getOrDefault(emptyList())
+                    if (savedSegments.isNotEmpty()) {
+                        addSpace(sessionCard, 8)
+                        addButton(sessionCard, "View transcript · ${savedSegments.size} segments", false) {
+                            showTranscriptSessionId = session.name
+                            showRecordings = false
+                            render()
+                        }
+                    }
+                    if (completeAudio.isNotEmpty()) {
+                        addSpace(sessionCard, 8)
+                        addButton(sessionCard, if (transcriptionBusy) "Transcription in progress…" else "Transcribe meeting offline", true) {
+                            transcribeSession(session, completeAudio)
+                        }
+                    }
                 }
                 addSpace(parent, 10)
             }
