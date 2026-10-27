@@ -107,7 +107,6 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopPlayback()
-        runCatching { transcriptStore?.close() }
         super.onDestroy()
     }
 
@@ -489,6 +488,176 @@ class MainActivity : Activity() {
         addButton(parent, "Refresh recordings", false) { render() }
         addSpace(parent, 8)
         addButton(parent, "Back to home", true) { showRecordings = false; render() }
+    }
+
+    private fun installOfflineModel() {
+        if (modelDownloadBusy || transcriptionBusy) return
+        modelDownloadBusy = true
+        modelDownloadPercent = 0
+        transcriptionMessage = "Preparing the offline English model download…"
+        render()
+        Thread {
+            try {
+                offlineModelManager.install { percent ->
+                    runOnUiThread {
+                        if (percent == 100 || percent / 5 != modelDownloadPercent / 5) {
+                            modelDownloadPercent = percent
+                            transcriptionMessage = "Downloading and verifying offline English model…"
+                            if (!isFinishing) render()
+                        }
+                    }
+                }
+                runOnUiThread {
+                    modelDownloadBusy = false
+                    modelDownloadPercent = 100
+                    transcriptionMessage = "English model installed. You can now transcribe with Airplane mode enabled."
+                    if (!isFinishing) render()
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    modelDownloadBusy = false
+                    transcriptionMessage = "Model installation failed: " + (error.message ?: error.javaClass.simpleName)
+                    if (!isFinishing) render()
+                }
+            }
+        }.start()
+    }
+
+    private fun transcribeSession(session: File, audioFiles: List<File>) {
+        if (transcriptionBusy || modelDownloadBusy) return
+        if (!offlineModelManager.isInstalled()) {
+            Toast.makeText(this, "Download the offline English model first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val validFiles = audioFiles.filter { it.isFile && it.length() > 0L }
+        if (validFiles.isEmpty()) {
+            Toast.makeText(this, "No completed audio files are available to transcribe.", Toast.LENGTH_LONG).show()
+            return
+        }
+        transcriptionBusy = true
+        transcriptionMessage = "Starting local transcription…"
+        showRecordings = true
+        showTranscriptSessionId = null
+        render()
+        Thread {
+            val store = getTranscriptStore()
+            var sequenceOffset = 0L
+            var timeOffsetMs = 0L
+            var totalSegments = 0
+            try {
+                // Retry replaces the old transcript; each new segment is persisted immediately.
+                store.deleteSegments(session.name)
+                validFiles.forEachIndexed { index, audio ->
+                    if (Thread.currentThread().isInterrupted) throw InterruptedException("Transcription cancelled.")
+                    store.enqueueChunk(session.name, audio.absolutePath)
+                    store.markChunkRunning(session.name, audio.absolutePath)
+                    val result = speechEngine.transcribe(
+                        audioFile = audio,
+                        sessionId = session.name,
+                        modelDirectory = offlineModelManager.modelDirectory(),
+                        sequenceOffset = sequenceOffset,
+                        timeOffsetMs = timeOffsetMs
+                    ) { segment ->
+                        store.saveSegment(segment)
+                        runOnUiThread {
+                            transcriptionMessage = "Transcribing \${audio.name} · \${segment.sequence + 1} text segment(s) saved…"
+                            if (!isFinishing) render()
+                        }
+                    }
+                    when (result) {
+                        is SpeechEngineResult.Success -> {
+                            store.markChunkComplete(session.name, audio.absolutePath)
+                            sequenceOffset += result.segmentCount
+                            totalSegments += result.segmentCount
+                        }
+                        is SpeechEngineResult.Failure -> {
+                            store.markChunkFailed(session.name, audio.absolutePath, result.message)
+                            throw IllegalStateException(result.message)
+                        }
+                    }
+                    timeOffsetMs += audioDurationMs(audio)
+                    runOnUiThread {
+                        transcriptionMessage = "Processed audio segment \${index + 1} of \${validFiles.size}…"
+                        if (!isFinishing) render()
+                    }
+                }
+                runOnUiThread {
+                    transcriptionBusy = false
+                    transcriptionMessage = if (totalSegments > 0) {
+                        "Transcription complete: $totalSegments text segment(s) saved locally. No audio or transcript was uploaded."
+                    } else {
+                        "Transcription finished, but no speech was recognized. Try a clearer recording."
+                    }
+                    showTranscriptSessionId = session.name
+                    showRecordings = false
+                    if (!isFinishing) render()
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    transcriptionBusy = false
+                    transcriptionMessage = "Transcription failed: " + (error.message ?: error.javaClass.simpleName)
+                    showRecordings = true
+                    showTranscriptSessionId = null
+                    if (!isFinishing) render()
+                }
+            }
+        }.start()
+    }
+
+    private fun renderTranscript(parent: LinearLayout, sessionId: String) {
+        addText(parent, "Meeting transcript", 29f, COLOR_TEXT, true)
+        addSpace(parent, 5)
+        addText(parent, "OFFLINE ENGLISH · SAVED LOCALLY", 11f, COLOR_PRIMARY_DARK, true)
+        addSpace(parent, 12)
+        val segments = runCatching { getTranscriptStore().listSegments(sessionId) }.getOrDefault(emptyList())
+        if (segments.isEmpty()) {
+            val empty = card(parent, COLOR_SURFACE)
+            addText(empty, "No transcript text yet", 17f, COLOR_TEXT, true)
+            addSpace(empty, 6)
+            addText(empty, transcriptionMessage ?: "Transcribe a completed recording to see its recognized speech here.", 13f, COLOR_MUTED)
+        } else {
+            addText(parent, "\${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
+            segments.forEach { segment ->
+                val item = card(parent, COLOR_SURFACE)
+                addText(item, "\${formatTimestamp(segment.startMs)} – \${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
+                addSpace(item, 6)
+                addText(item, segment.text, 15f, COLOR_TEXT)
+            }
+        }
+        if (transcriptionMessage != null) {
+            addSpace(parent, 8)
+            addText(parent, transcriptionMessage!!, 12f, COLOR_MUTED)
+        }
+        addSpace(parent, 16)
+        addButton(parent, "Back to recordings", true) {
+            showTranscriptSessionId = null
+            showRecordings = true
+            render()
+        }
+    }
+
+    private fun getTranscriptStore(): TranscriptStore =
+        transcriptStore ?: TranscriptStore(this).also { transcriptStore = it }
+
+    private fun audioDurationMs(audio: File): Long {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(audio.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    private fun formatTimestamp(milliseconds: Long): String {
+        val totalSeconds = milliseconds.coerceAtLeast(0L) / 1000L
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
+        else "%02d:%02d".format(minutes, seconds)
     }
 
     private fun latestRecordingFiles(): List<File> {
