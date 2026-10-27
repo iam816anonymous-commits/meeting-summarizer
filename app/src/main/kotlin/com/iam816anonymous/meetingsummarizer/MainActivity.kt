@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.ViewGroup
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -38,7 +39,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(22), dp(20), dp(22), dp(28))
         }
-        scroll.addView(content, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(content, ViewGroup.LayoutParams(-1, -2))
         addHeader(content)
         addSpace(content, 22)
 
