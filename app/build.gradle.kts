@@ -44,7 +44,9 @@ android {
 }
 
 dependencies {
-    implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8")
+    implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8") {
+        exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+    }
     implementation("org.apache.commons:commons-compress:1.28.0")
     testImplementation(libs.junit)
 }
