@@ -22,8 +22,13 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import android.media.MediaPlayer
+import android.media.MediaMetadataRetriever
 import java.io.File
 import java.util.Properties
+import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
+import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
+import com.iam816anonymous.meetingsummarizer.transcription.SpeechEngineResult
+import com.iam816anonymous.meetingsummarizer.transcription.TranscriptStore
 import com.iam816anonymous.meetingsummarizer.data.DemoMeetingRepository
 import com.iam816anonymous.meetingsummarizer.workflow.MeetingScreenState
 import com.iam816anonymous.meetingsummarizer.workflow.MeetingWorkflowAction
@@ -45,6 +50,14 @@ class MainActivity : Activity() {
     private var currentSessionId: String? = null
     private var mediaPlayer: MediaPlayer? = null
     private var currentlyPlaying: File? = null
+    private var showTranscriptSessionId: String? = null
+    private var modelDownloadBusy = false
+    private var modelDownloadPercent = 0
+    private var transcriptionBusy = false
+    private var transcriptionMessage: String? = null
+    private var transcriptStore: TranscriptStore? = null
+    private val offlineModelManager by lazy { OfflineModelManager(this) }
+    private val speechEngine by lazy { SherpaOnnxEnglishSpeechEngine() }
 
     private val recordingStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -66,6 +79,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         RecordingService.recoverInterruptedSegments(this)
+        runCatching { getTranscriptStore().recoverInterruptedJobs() }
         render()
     }
 
@@ -93,6 +107,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopPlayback()
+        runCatching { transcriptStore?.close() }
         super.onDestroy()
     }
 
@@ -162,7 +177,9 @@ class MainActivity : Activity() {
         addHeader(content)
         addSpace(content, 22)
 
-        if (showRecordings) {
+        if (showTranscriptSessionId != null) {
+            renderTranscript(content, showTranscriptSessionId!!)
+        } else if (showRecordings) {
             renderRecordings(content)
         } else {
             when (workflowState.screen) {
