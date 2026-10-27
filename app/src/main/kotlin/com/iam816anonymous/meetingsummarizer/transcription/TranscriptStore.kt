@@ -51,6 +51,10 @@ class TranscriptStore(context: Context) :
         check(rowId != -1L) { "Failed to persist transcript segment sequence ${segment.sequence}" }
     }
 
+    fun deleteSegments(sessionId: String) {
+        writableDatabase.delete("transcript_segments", "session_id = ?", arrayOf(sessionId))
+    }
+
     fun listSegments(sessionId: String): List<TranscriptSegment> {
         val result = mutableListOf<TranscriptSegment>()
         readableDatabase.query(

@@ -15,6 +15,8 @@ interface SpeechEngine {
         audioFile: File,
         sessionId: String,
         modelDirectory: File,
+        sequenceOffset: Long = 0L,
+        timeOffsetMs: Long = 0L,
         onSegment: (TranscriptSegment) -> Unit
     ): SpeechEngineResult
 }

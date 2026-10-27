@@ -30,6 +30,23 @@ kotlin {
     }
 }
 
+android {
+    defaultConfig {
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+    packaging {
+        resources {
+            excludes += setOf("sherpa-onnx/native/**", "META-INF/DEPENDENCIES")
+        }
+    }
+}
+
 dependencies {
+    implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8") {
+        exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+    }
+    implementation("org.apache.commons:commons-compress:1.28.0")
     testImplementation(libs.junit)
 }
