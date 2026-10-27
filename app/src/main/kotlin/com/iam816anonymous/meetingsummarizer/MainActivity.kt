@@ -403,8 +403,32 @@ class MainActivity : Activity() {
     private fun renderRecordings(parent: LinearLayout) {
         addText(parent, "Saved recordings", 29f, COLOR_TEXT, true)
         addSpace(parent, 6)
-        addText(parent, "Audio stays on this device. Tap Play to verify a saved segment.", 14f, COLOR_MUTED)
-        addSpace(parent, 16)
+        addText(parent, "Audio and transcripts stay on this device. The English model is downloaded only when you choose to install it; recognition runs locally.", 14f, COLOR_MUTED)
+        addSpace(parent, 14)
+        val modelCard = card(parent, COLOR_SURFACE_ALT)
+        addText(modelCard, "Offline English transcription", 18f, COLOR_TEXT, true)
+        addSpace(modelCard, 5)
+        if (offlineModelManager.isInstalled()) {
+            addText(modelCard, "Model installed · transcription works without internet.", 13f, COLOR_PRIMARY_DARK)
+        } else {
+            addText(modelCard, "Model not installed. Download it once while connected; meeting audio is never uploaded.", 13f, COLOR_MUTED)
+        }
+        if (modelDownloadBusy) {
+            addSpace(modelCard, 8)
+            addText(modelCard, "Downloading and verifying model: $modelDownloadPercent%", 13f, COLOR_PRIMARY_DARK, true)
+        } else if (!offlineModelManager.isInstalled()) {
+            addSpace(modelCard, 8)
+            addButton(modelCard, "Download offline English model", true) { installOfflineModel() }
+        }
+        if (transcriptionMessage != null) {
+            addSpace(modelCard, 8)
+            addText(modelCard, transcriptionMessage!!, 13f, if (transcriptionMessage!!.startsWith("Transcription failed")) COLOR_WARNING else COLOR_PRIMARY_DARK)
+        }
+        if (transcriptionBusy) {
+            addSpace(modelCard, 8)
+            addText(modelCard, "Transcription is running. Keep the app installed; you can leave this screen open.", 12f, COLOR_MUTED)
+        }
+        addSpace(parent, 18)
         val root = File(filesDir, "recordings")
         val sessions = root.listFiles()?.filter { it.isDirectory }?.sortedByDescending { it.lastModified() }.orEmpty()
         if (sessions.isEmpty()) {
