@@ -18,19 +18,20 @@
 ## Toolchain
 - Android Gradle Plugin: 9.3.1
 - Gradle: 9.5.0
-- Kotlin: 2.4.21
+- Kotlin: Android Gradle Plugin built-in Kotlin support (no separate Kotlin Android Gradle plugin)
 - JDK: 17
 - Compile/target SDK: 36
 - Minimum SDK: 26
 
-Versions are pinned, not dynamic. The Kotlin/Gradle compatibility table supports this plugin family, but the actual build remains unverified until CI completes.
+The project uses AGP's built-in Kotlin support. Do not apply `org.jetbrains.kotlin.android` alongside AGP 9+, because AGP reports that plugin as incompatible/redundant. Kotlin JVM bytecode target is explicitly set to 17.
 
 ## Validation
-1. `gradle --no-daemon --stacktrace :app:assembleDebug`
-2. `gradle --no-daemon --stacktrace :app:lintDebug`
-3. Confirm `app/build/outputs/apk/debug/app-debug.apk` exists and is non-empty.
-4. Upload that APK as a workflow artifact.
-5. After CI succeeds, install and launch on an emulator or physical Android device before declaring the phase complete.
+1. `gradle --no-daemon --stacktrace :app:testDebugUnitTest`
+2. `gradle --no-daemon --stacktrace :app:assembleDebug`
+3. `gradle --no-daemon --stacktrace :app:lintDebug`
+4. Confirm `app/build/outputs/apk/debug/app-debug.apk` exists and is non-empty.
+5. Upload that APK as a workflow artifact.
+6. After CI succeeds, install and launch on an emulator or physical Android device before declaring the phase complete.
 
 ## Status
-Project files and CI workflow are being published as one coherent commit. Until the workflow runs, build/lint status is **not yet verified**. This environment does not have Gradle or an Android SDK installed, so no local Android build is claimed.
+Project files and CI workflow are being published as coherent commits. Until the workflow runs, build/lint status is **not yet verified**. This environment does not have Gradle or an Android SDK installed, so no local Android build is claimed.
