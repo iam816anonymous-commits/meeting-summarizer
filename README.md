@@ -16,12 +16,13 @@ An offline-first Android meeting assistant. The user explicitly starts and stops
 - [Phase 7 audit — personal action items and progress UX](docs/PHASE_7_AUDIT.md)
 - [Phase 8 research — local model and ASR evaluation](docs/PHASE_8_RESEARCH.md)
 - [Phase 8 audit — adaptive model profiles, optional runtime and safety scaffolding](docs/PHASE_8_AUDIT.md)
+- [Model artifact research — exact files, sizes, checksums, language candidates and integration gates](docs/MODEL_ARTIFACT_RESEARCH.md)
 
 ### Current implementation status
 
 - **Implemented:** recording lifecycle, local English ASR, timestamped transcript storage, transcript correction/search/deletion/recovery, deterministic evidence-linked summaries, and personal action-item ranking.
 - **Phase 8 scaffolding in this branch:** ordered resource profiles (smallest eligible tier first), LiteRT-LM adapter for installed `.litertlm` files, opt-in verified-download primitive, conservative output guard, and privacy-preserving benchmark aggregation.
-- **Not yet complete:** model artifact catalog with verified URLs/checksums/licenses, end-to-end install and inference UI, strict structured evidence validation, and real-phone benchmarks. The capability button assesses resource tiers; it does not yet download or execute a model.
+- **Not yet complete:** in-app model artifact catalog wired to verified download/install, Whisper-based Hindi/Telugu/multilingual transcription, strict structured evidence validation, and real-phone benchmarks. The research inventory identifies exact Qwen3 INT4 files with published hashes and Whisper language-pack candidates; it deliberately does not mark ASR candidates as installable until per-file hashes, pinned revisions, the Whisper engine, and tests are implemented. The capability button assesses resource tiers; it does not yet download or execute a model.
 - **Fallback guarantee:** model failure or absence must never prevent access to the deterministic offline summary. No model is forced, and no model is downloaded automatically.
 - **Validation:** GitHub Actions runs unit tests, debug APK assembly, Android lint, APK verification and artifact upload. CI is not a substitute for physical-device testing.
 
