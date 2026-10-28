@@ -69,7 +69,8 @@ class WhisperTinyModelManager(context: Context) {
         var connection: HttpURLConnection? = null
         try {
             var url = URL(artifact.url)
-            repeat(MAX_REDIRECTS + 1) { redirect ->
+            var redirects = 0
+            while (true) {
                 connection = (url.openConnection() as HttpURLConnection).apply {
                     connectTimeout = 20_000
                     readTimeout = 45_000
@@ -79,24 +80,23 @@ class WhisperTinyModelManager(context: Context) {
                 }
                 connection!!.connect()
                 val code = connection!!.responseCode
-                if (code in 200..299) return@repeat
+                if (code in 200..299) break
                 if (code in listOf(301, 302, 303, 307, 308)) {
                     val location = connection!!.getHeaderField("Location")
                         ?: throw IllegalStateException("Model host returned a redirect without a destination.")
                     connection!!.disconnect()
                     connection = null
-                    if (redirect == MAX_REDIRECTS) throw IllegalStateException("Too many model download redirects.")
+                    if (redirects++ >= MAX_REDIRECTS) throw IllegalStateException("Too many model download redirects.")
                     val next = URL(url, location)
                     if (next.protocol != "https" || !isAllowedHost(next.host)) {
                         throw IllegalStateException("Model host redirected to an untrusted location.")
                     }
                     url = next
-                    return@repeat
+                    continue
                 }
                 throw IllegalStateException("Model host returned HTTP $code.")
             }
             val active = connection ?: throw IllegalStateException("Model download connection was not established.")
-            if (active.responseCode !in 200..299) throw IllegalStateException("Model host returned HTTP ${active.responseCode}.")
             val advertised = active.contentLengthLong
             if (advertised > 0L && advertised != artifact.bytes) throw IllegalStateException("Published file size differs from the pinned model manifest.")
             val digest = MessageDigest.getInstance("SHA-256")
