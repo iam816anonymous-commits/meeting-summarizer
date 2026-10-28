@@ -15,6 +15,7 @@ class TranscriptStore(context: Context) :
                 session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                 start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, text TEXT NOT NULL,
                 speaker_label TEXT, confidence REAL, is_final INTEGER NOT NULL,
+                is_edited INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (session_id, sequence)
             )""".trimIndent()
         )
