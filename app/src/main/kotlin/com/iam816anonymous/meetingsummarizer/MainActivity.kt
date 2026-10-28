@@ -71,6 +71,12 @@ class MainActivity : Activity() {
     private var summaryVisibleSessionId: String? = null
     private var llmAssessmentMessage: String? = null
     private var modelDownloadBusy = false
+    private var englishDownloadBusy = false
+    private var whisperDownloadBusy = false
+    private var englishDownloadPercent = 0
+    private var whisperDownloadPercent = 0
+    private var englishDownloadStage = "Ready"
+    private var whisperDownloadStage = "Ready"
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
     private var modelProgressBar: ProgressBar? = null
@@ -550,13 +556,14 @@ class MainActivity : Activity() {
         val englishCard = card(parent, COLOR_SURFACE)
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
         addText(englishCard, if (offlineModelManager.isInstalled()) "Installed · available offline" else "Not installed · download once to use offline", 12f, if (offlineModelManager.isInstalled()) COLOR_PRIMARY_DARK else COLOR_MUTED)
-        if (!offlineModelManager.isInstalled() && !modelDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
+        if (!offlineModelManager.isInstalled() && !englishDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
+        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent }, matchWrapParams()) }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
         addText(whisperCard, if (whisperReady) "Installed · about 99 MiB · works offline" else "Optional · about 99 MiB download · keep 250 MiB free for installation", 12f, if (whisperReady) COLOR_PRIMARY_DARK else COLOR_MUTED)
         addSpace(whisperCard, 8)
-        if (!whisperReady && !modelDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
+        if (!whisperReady && !whisperDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
         } else if (whisperReady && selectedEngine() != "whisper-multilingual") {
             addButton(whisperCard, "Use multilingual model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply(); transcriptionMessage = "Multilingual Whisper selected for " + languageDisplayName(selectedLanguage()) + "."; render() }
         } else if (whisperReady) {
@@ -571,6 +578,8 @@ class MainActivity : Activity() {
             progressCard.addView(progress, matchWrapParams())
             addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
         }
+        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent }, matchWrapParams()) }
+        if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Downloads continue while you navigate. Wait for both installations to finish before transcribing.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
@@ -626,7 +635,8 @@ class MainActivity : Activity() {
     }
 
     private fun installWhisperModel() {
-        if (modelDownloadBusy || transcriptionBusy) return
+        if (whisperDownloadBusy || transcriptionBusy) return
+        whisperDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
         modelInstallStage = "Preparing multilingual Whisper download"
@@ -638,6 +648,8 @@ class MainActivity : Activity() {
                     onProgress = { progress ->
                         runOnUiThread {
                             modelDownloadPercent = progress.percent.coerceIn(0, 100)
+                            whisperDownloadPercent = modelDownloadPercent
+                            whisperDownloadStage = progress.fileName
                             modelInstallStage = "Whisper · ${progress.fileName}"
                             if (!isFinishing) render()
                         }
@@ -650,8 +662,11 @@ class MainActivity : Activity() {
                     }
                 )
                 runOnUiThread {
-                    modelDownloadBusy = false
+                    whisperDownloadBusy = false
+                    modelDownloadBusy = englishDownloadBusy
                     modelDownloadPercent = 100
+                    whisperDownloadPercent = 100
+                    whisperDownloadStage = "Installed"
                     modelInstallStage = "Whisper installed"
                     showModelSettings = true
                     modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply()
@@ -660,7 +675,9 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    modelDownloadBusy = false
+                    whisperDownloadBusy = false
+                    modelDownloadBusy = englishDownloadBusy
+                    whisperDownloadStage = "Failed"
                     modelInstallStage = "Whisper installation failed"
                     showModelSettings = true
                     transcriptionMessage = "Multilingual model download failed: " + (error.message ?: error.javaClass.simpleName)
@@ -671,7 +688,8 @@ class MainActivity : Activity() {
     }
 
     private fun installOfflineModel() {
-        if (modelDownloadBusy || transcriptionBusy) return
+        if (englishDownloadBusy || transcriptionBusy) return
+        englishDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
         modelInstallStage = "Connecting to model host"
@@ -683,7 +701,10 @@ class MainActivity : Activity() {
                     onProgress = { percent ->
                         runOnUiThread {
                             modelDownloadPercent = percent.coerceIn(0, 100)
+                            englishDownloadPercent = modelDownloadPercent
+                            englishDownloadStage = "Downloading"
                             modelProgressLabel?.text = modelInstallProgressText()
+                            if (!isFinishing) render()
                             modelProgressBar?.progress = modelDownloadPercent
                         }
                     },
@@ -696,8 +717,11 @@ class MainActivity : Activity() {
                     }
                 )
                 runOnUiThread {
-                    modelDownloadBusy = false
+                    englishDownloadBusy = false
+                    modelDownloadBusy = whisperDownloadBusy
                     modelDownloadPercent = 100
+                    englishDownloadPercent = 100
+                    englishDownloadStage = "Installed"
                     modelInstallStage = "Installed"
                     modelProgressBar = null
                     modelProgressLabel = null
@@ -706,7 +730,9 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    modelDownloadBusy = false
+                    englishDownloadBusy = false
+                    modelDownloadBusy = whisperDownloadBusy
+                    englishDownloadStage = "Failed"
                     modelProgressBar = null
                     modelProgressLabel = null
                     modelInstallStage = "Installation failed"
