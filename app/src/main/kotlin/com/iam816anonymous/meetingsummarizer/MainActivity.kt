@@ -97,6 +97,8 @@ class MainActivity : Activity() {
     private var englishDownloadBusy = false
     private var whisperDownloadBusy = false
     private var englishDownloadPercent = 0
+    private var englishDownloadedBytes = 0L
+    private var englishTotalBytes = -1L
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
     private var whisperDownloadStage = "Ready"
@@ -592,7 +594,7 @@ class MainActivity : Activity() {
         if (!offlineModelManager.isInstalled() && !englishDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
         if (englishDownloadBusy) {
             addSpace(englishCard, 8)
-            addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true)
+            addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "% · " + formatBytes(englishDownloadedBytes) + if (englishTotalBytes > 0L) " / " + formatBytes(englishTotalBytes) else " downloaded", 12f, COLOR_PRIMARY_DARK, true)
             if (englishDownloadStage in listOf("Connecting to model host", "Installing model files", "Verifying model")) englishCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
             englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent }, matchWrapParams())
             addText(englishCard, "Keep the app open. Progress refreshes periodically.", 11f, COLOR_MUTED)
@@ -914,6 +916,8 @@ class MainActivity : Activity() {
         englishDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        englishDownloadedBytes = 0L
+        englishTotalBytes = -1L
         modelInstallStage = "Connecting to model host"
         transcriptionMessage = "Preparing the offline English model download…"
         render()
@@ -922,7 +926,6 @@ class MainActivity : Activity() {
                 offlineModelManager.install(
                     onProgress = { percent ->
                         val bounded = percent.coerceIn(0, 100)
-                        // Rebuilding the whole Activity for every 64 KiB read starved the UI thread.
                         if (bounded != englishDownloadPercent) runOnUiThread {
                             if (bounded != englishDownloadPercent) {
                                 modelDownloadPercent = bounded
@@ -932,6 +935,13 @@ class MainActivity : Activity() {
                                 modelProgressBar?.progress = bounded
                                 if (!isFinishing) render()
                             }
+                        }
+                    },
+                    onBytesProgress = { written, total ->
+                        runOnUiThread {
+                            englishDownloadedBytes = written
+                            englishTotalBytes = total
+                            if (!isFinishing && (written == 0L || written % (4L * 1024L * 1024L) < 64L * 1024L)) render()
                         }
                     },
                     onStage = { stage ->
