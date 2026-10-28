@@ -30,11 +30,18 @@ class TranscriptStore(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Never drop meeting data. Add explicit versioned migrations as the schema evolves.
-        throw IllegalStateException("No migration path from database version $oldVersion to $newVersion")
+        // Additive migration: preserve all existing transcript and job rows.
+        if (oldVersion < 2) db.execSQL("ALTER TABLE transcript_segments ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0")
+        if (oldVersion > newVersion) throw IllegalStateException("Cannot downgrade database from $oldVersion to $newVersion")
     }
 
     fun saveSegment(segment: TranscriptSegment) {
+        // Human corrections are source-of-truth and must not be overwritten by a later ASR retry.
+        readableDatabase.query("transcript_segments", arrayOf("is_edited"),
+            "session_id = ? AND sequence = ?", arrayOf(segment.sessionId, segment.sequence.toString()),
+            null, null, null).use { cursor ->
+            if (cursor.moveToFirst() && cursor.getInt(0) != 0) return
+        }
         val values = ContentValues().apply {
             put("session_id", segment.sessionId)
             put("sequence", segment.sequence)
@@ -44,6 +51,7 @@ class TranscriptStore(context: Context) :
             put("speaker_label", segment.speakerLabel)
             if (segment.confidence == null) putNull("confidence") else put("confidence", segment.confidence)
             put("is_final", if (segment.isFinal) 1 else 0)
+            put("is_edited", 0)
         }
         val rowId = writableDatabase.insertWithOnConflict(
             "transcript_segments", null, values, SQLiteDatabase.CONFLICT_REPLACE
@@ -55,6 +63,41 @@ class TranscriptStore(context: Context) :
         writableDatabase.delete("transcript_segments", "session_id = ?", arrayOf(sessionId))
     }
 
+    fun deleteUneditedSegments(sessionId: String) {
+        writableDatabase.delete("transcript_segments", "session_id = ? AND is_edited = 0", arrayOf(sessionId))
+    }
+
+    fun updateSegmentText(sessionId: String, sequence: Long, correctedText: String): Boolean {
+        val normalized = correctedText.trim()
+        if (sessionId.isBlank() || normalized.isBlank() || normalized.length > MAX_SEGMENT_TEXT_LENGTH) return false
+        val values = ContentValues().apply { put("text", normalized); put("is_edited", 1); put("is_final", 1) }
+        return writableDatabase.update("transcript_segments", values,
+            "session_id = ? AND sequence = ?", arrayOf(sessionId, sequence.toString())) == 1
+    }
+
+    /** Parameterized, case-insensitive search across all stored sessions. */
+    fun searchSegments(query: String, limit: Int = 100): List<TranscriptSegment> {
+        val term = query.trim()
+        if (term.isEmpty() || limit <= 0) return emptyList()
+        val result = mutableListOf<TranscriptSegment>()
+        readableDatabase.query("transcript_segments",
+            arrayOf("session_id", "sequence", "start_ms", "end_ms", "text", "speaker_label", "confidence", "is_final"),
+            "instr(lower(text), lower(?)) > 0", arrayOf(term), null, null,
+            "session_id ASC, start_ms ASC, sequence ASC", limit.coerceAtMost(MAX_SEARCH_RESULTS).toString()
+        ).use { cursor -> while (cursor.moveToNext()) result += cursorToSegment(cursor) }
+        return result
+    }
+
+    fun deleteMeeting(sessionId: String) {
+        require(sessionId.isNotBlank())
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete("transcript_segments", "session_id = ?", arrayOf(sessionId))
+            writableDatabase.delete("transcription_jobs", "session_id = ?", arrayOf(sessionId))
+            writableDatabase.setTransactionSuccessful()
+        } finally { writableDatabase.endTransaction() }
+    }
+
     fun listSegments(sessionId: String): List<TranscriptSegment> {
         val result = mutableListOf<TranscriptSegment>()
         readableDatabase.query(
@@ -64,16 +107,7 @@ class TranscriptStore(context: Context) :
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 val confidenceIndex = cursor.getColumnIndexOrThrow("confidence")
-                result += TranscriptSegment(
-                    sessionId = cursor.getString(cursor.getColumnIndexOrThrow("session_id")),
-                    sequence = cursor.getLong(cursor.getColumnIndexOrThrow("sequence")),
-                    startMs = cursor.getLong(cursor.getColumnIndexOrThrow("start_ms")),
-                    endMs = cursor.getLong(cursor.getColumnIndexOrThrow("end_ms")),
-                    text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
-                    speakerLabel = cursor.getString(cursor.getColumnIndexOrThrow("speaker_label")),
-                    confidence = if (cursor.isNull(confidenceIndex)) null else cursor.getFloat(confidenceIndex),
-                    isFinal = cursor.getInt(cursor.getColumnIndexOrThrow("is_final")) != 0
-                )
+                result += cursorToSegment(cursor)
             }
         }
         return result
@@ -138,6 +172,20 @@ class TranscriptStore(context: Context) :
         return result
     }
 
+    private fun cursorToSegment(cursor: android.database.Cursor): TranscriptSegment {
+        val confidenceIndex = cursor.getColumnIndexOrThrow("confidence")
+        return TranscriptSegment(
+            sessionId = cursor.getString(cursor.getColumnIndexOrThrow("session_id")),
+            sequence = cursor.getLong(cursor.getColumnIndexOrThrow("sequence")),
+            startMs = cursor.getLong(cursor.getColumnIndexOrThrow("start_ms")),
+            endMs = cursor.getLong(cursor.getColumnIndexOrThrow("end_ms")),
+            text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
+            speakerLabel = cursor.getString(cursor.getColumnIndexOrThrow("speaker_label")),
+            confidence = if (cursor.isNull(confidenceIndex)) null else cursor.getFloat(confidenceIndex),
+            isFinal = cursor.getInt(cursor.getColumnIndexOrThrow("is_final")) != 0
+        )
+    }
+
     private fun updateJob(sessionId: String, audioPath: String, status: JobStatus, error: String?) {
         val values = ContentValues().apply {
             put("status", status.name)
@@ -161,7 +209,9 @@ class TranscriptStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "meeting_transcripts.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
         private const val MAX_ERROR_LENGTH = 500
+        private const val MAX_SEGMENT_TEXT_LENGTH = 10_000
+        private const val MAX_SEARCH_RESULTS = 500
     }
 }

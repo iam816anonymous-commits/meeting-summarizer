@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -51,6 +52,7 @@ class MainActivity : Activity() {
     private var mediaPlayer: MediaPlayer? = null
     private var currentlyPlaying: File? = null
     private var showTranscriptSessionId: String? = null
+    private var transcriptSearchQuery: String = ""
     private var modelDownloadBusy = false
     private var modelDownloadPercent = 0
     private var transcriptionBusy = false
@@ -403,6 +405,35 @@ class MainActivity : Activity() {
         addText(parent, "Saved recordings", 29f, COLOR_TEXT, true)
         addSpace(parent, 6)
         addText(parent, "Audio and transcripts stay on this device. The English model is downloaded only when you choose to install it; recognition runs locally.", 14f, COLOR_MUTED)
+        addSpace(parent, 12)
+        val searchCard = card(parent, COLOR_SURFACE_ALT)
+        addText(searchCard, "Search transcripts", 17f, COLOR_TEXT, true)
+        addSpace(searchCard, 6)
+        addText(searchCard, "Find a phrase across saved meetings.", 13f, COLOR_MUTED)
+        addSpace(searchCard, 8)
+        addButton(searchCard, if (transcriptSearchQuery.isBlank()) "Search all transcripts" else "Search again · ${transcriptSearchQuery.take(24)}", true) { promptTranscriptSearch() }
+        if (transcriptSearchQuery.isNotBlank()) {
+            addSpace(searchCard, 8)
+            val matches = runCatching { getTranscriptStore().searchSegments(transcriptSearchQuery, 100) }.getOrDefault(emptyList())
+            addText(searchCard, "${matches.size} match(es) · showing up to 100", 12f, COLOR_MUTED, true)
+            if (matches.isEmpty()) {
+                addSpace(searchCard, 5)
+                addText(searchCard, "No transcript text matched that phrase.", 13f, COLOR_MUTED)
+            } else {
+                matches.forEach { segment ->
+                    addSpace(searchCard, 8)
+                    addText(searchCard, "${segment.sessionId} · ${formatTimestamp(segment.startMs)}", 11f, COLOR_PRIMARY_DARK, true)
+                    addText(searchCard, segment.text, 13f, COLOR_TEXT)
+                    addButton(searchCard, "Open meeting transcript", false) {
+                        showTranscriptSessionId = segment.sessionId
+                        showRecordings = false
+                        render()
+                    }
+                }
+            }
+            addSpace(searchCard, 8)
+            addButton(searchCard, "Clear search", false) { transcriptSearchQuery = ""; render() }
+        }
         addSpace(parent, 14)
         val modelCard = card(parent, COLOR_SURFACE_ALT)
         addText(modelCard, "Offline English transcription", 18f, COLOR_TEXT, true)
@@ -481,6 +512,8 @@ class MainActivity : Activity() {
                         }
                     }
                 }
+                addSpace(sessionCard, 8)
+                addButton(sessionCard, "Delete meeting and audio", false) { confirmDeleteMeeting(session) }
                 addSpace(parent, 10)
             }
         }
@@ -546,7 +579,7 @@ class MainActivity : Activity() {
             var totalSegments = 0
             try {
                 // Retry replaces the old transcript; each new segment is persisted immediately.
-                store.deleteSegments(session.name)
+                store.deleteUneditedSegments(session.name)
                 validFiles.forEachIndexed { index, audio ->
                     if (Thread.currentThread().isInterrupted) throw InterruptedException("Transcription cancelled.")
                     store.enqueueChunk(session.name, audio.absolutePath)
@@ -622,6 +655,10 @@ class MainActivity : Activity() {
                 addText(item, "\${formatTimestamp(segment.startMs)} – \${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
                 addSpace(item, 6)
                 addText(item, segment.text, 15f, COLOR_TEXT)
+                addSpace(item, 8)
+                addButton(item, "Correct transcript text", false) {
+                    promptSegmentCorrection(segment.sessionId, segment.sequence, segment.text)
+                }
             }
         }
         if (transcriptionMessage != null) {
@@ -634,6 +671,55 @@ class MainActivity : Activity() {
             showRecordings = true
             render()
         }
+    }
+
+    private fun promptTranscriptSearch() {
+        val field = EditText(this).apply {
+            setSingleLine(true)
+            hint = "Phrase to find"
+            setText(transcriptSearchQuery)
+            setSelection(text.length)
+        }
+        AlertDialog.Builder(this).setTitle("Search saved transcripts").setView(field)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Search") { _, _ -> transcriptSearchQuery = field.text?.toString()?.trim().orEmpty(); render() }
+            .show()
+    }
+
+    private fun promptSegmentCorrection(sessionId: String, sequence: Long, currentText: String) {
+        val field = EditText(this).apply {
+            setText(currentText); hint = "Correct recognized words"; minLines = 3; maxLines = 8; gravity = Gravity.TOP
+        }
+        AlertDialog.Builder(this).setTitle("Correct transcript")
+            .setMessage("Your correction is saved locally and will be preserved when transcription is retried.")
+            .setView(field).setNegativeButton("Cancel", null)
+            .setPositiveButton("Save correction") { _, _ ->
+                val corrected = field.text?.toString().orEmpty().trim()
+                val saved = runCatching { getTranscriptStore().updateSegmentText(sessionId, sequence, corrected) }.getOrDefault(false)
+                Toast.makeText(this, if (saved) "Transcript correction saved." else "Correction must contain text and could not be saved.", if (saved) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                render()
+            }.show()
+    }
+
+    private fun confirmDeleteMeeting(session: File) {
+        AlertDialog.Builder(this).setTitle("Delete this meeting?")
+            .setMessage("This permanently deletes this meeting's saved audio, transcript text, and transcription jobs from this device. The shared offline English model and other meetings are kept.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Delete meeting") { _, _ ->
+                val recordingsRoot = File(filesDir, "recordings").canonicalFile
+                val target = runCatching { session.canonicalFile }.getOrNull()
+                if (target == null || target.parentFile != recordingsRoot || !target.isDirectory) {
+                    Toast.makeText(this, "Could not verify the meeting folder; nothing was deleted.", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                val databaseDeleted = runCatching { getTranscriptStore().deleteMeeting(session.name); true }.getOrDefault(false)
+                val audioDeleted = runCatching { target.deleteRecursively() }.getOrDefault(false)
+                if (databaseDeleted && audioDeleted) {
+                    if (showTranscriptSessionId == session.name) showTranscriptSessionId = null
+                    Toast.makeText(this, "Meeting and local audio deleted.", Toast.LENGTH_SHORT).show()
+                } else Toast.makeText(this, "Deletion was incomplete. Refresh and check this meeting before retrying.", Toast.LENGTH_LONG).show()
+                render()
+            }.show()
     }
 
     private fun getTranscriptStore(): TranscriptStore =
