@@ -724,6 +724,29 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun generateLocalMeetingSummary(
+        sessionId: String,
+        segments: List<com.iam816anonymous.meetingsummarizer.transcription.TranscriptSegment>,
+        model: LocalLlmModel
+    ) {
+        if (!llmSummaryBusy.add(sessionId)) return
+        render()
+        Thread {
+            val result = try {
+                localMeetingSummaryService.summarize(model, llmModelDirectory(), segments)
+            } catch (error: Exception) {
+                MeetingLlmSummaryResult.Fallback(
+                    error.message ?: "Local AI summary failed unexpectedly."
+                )
+            }
+            runOnUiThread {
+                llmSummaryBusy.remove(sessionId)
+                llmSummaryResults[sessionId] = result
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
     private fun testLocalLlmModel(model: LocalLlmModel) {
         if (!llmTestBusy.add(model.id)) return
         llmStatusMessage = "Loading " + model.displayName + " off the UI thread and running a short offline generation test…"
