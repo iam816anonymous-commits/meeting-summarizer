@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private var recordingError: String? = null
     private var receiverRegistered = false
     private var showRecordings = false
+    private var showModelSettings = false
     private var currentSessionId: String? = null
     private var mediaPlayer: MediaPlayer? = null
     private var currentlyPlaying: File? = null
@@ -206,6 +207,8 @@ class MainActivity : Activity() {
             renderTranscript(content, showTranscriptSessionId!!)
         } else if (showRecordings) {
             renderRecordings(content)
+        } else if (showModelSettings) {
+            renderModelSettings(content)
         } else {
             when (workflowState.screen) {
                 MeetingScreenState.IDLE -> renderHome(content)
@@ -213,7 +216,7 @@ class MainActivity : Activity() {
                 MeetingScreenState.RESULTS_READY -> renderResults(content)
             }
         }
-        if (!recordingActive && recordingStatus == RecordingLifecycleState.COMPLETED.name && !showRecordings) {
+        if (!recordingActive && recordingStatus == RecordingLifecycleState.COMPLETED.name && !showRecordings && !showModelSettings) {
             addSpace(content, 16)
             val saved = card(content, COLOR_TINT)
             addText(saved, "Recording stopped and saved", 19f, COLOR_PRIMARY_DARK, true)
@@ -234,8 +237,6 @@ class MainActivity : Activity() {
             addButton(activeRecording, "Stop recording", true) { stopRecordingService() }
         }
 
-        addSpace(content, 20)
-        addText(content, "PHASE 3 · EXPLICIT, LOCAL MICROPHONE RECORDING", 11f, COLOR_MUTED, true, Gravity.CENTER)
         setContentView(scroll)
     }
 
@@ -260,6 +261,16 @@ class MainActivity : Activity() {
         addText(titleColumn, "Meeting Summarizer", 17f, COLOR_TEXT, true)
         addText(titleColumn, "PRIVATE BY DESIGN", 10f, COLOR_MUTED, true)
         row.addView(titleColumn, LinearLayout.LayoutParams(0, -2, 1f))
+        val more = TextView(this).apply {
+            text = "⋮"
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setTextColor(COLOR_TEXT)
+            setPadding(dp(12), 0, dp(4), 0)
+            setOnClickListener { showAppMenu() }
+            contentDescription = "More options"
+        }
+        row.addView(more, LinearLayout.LayoutParams(dp(40), dp(48)))
         val mode = TextView(this).apply {
             text = "OFFLINE FIRST"
             textSize = 10f
@@ -273,67 +284,37 @@ class MainActivity : Activity() {
     }
 
     private fun renderHome(parent: LinearLayout) {
-        addText(parent, "Make every meeting\nmore actionable.", 31f, COLOR_TEXT, true)
-        addSpace(parent, 8)
-        addText(parent, "A focused place for decisions, follow-ups, and the things that matter to you.", 15f, COLOR_MUTED)
-        addSpace(parent, 22)
-
+        addText(parent, "Meeting notes,\nmade actionable.", 30f, COLOR_TEXT, true)
+        addSpace(parent, 7)
+        addText(parent, "Record a meeting, then review its transcript and follow-ups.", 14f, COLOR_MUTED)
+        addSpace(parent, 20)
         val hero = card(parent, COLOR_PRIMARY_DARK)
-        addText(hero, "YOUR NEXT MEETING", 11f, 0xFFC9C5FF.toInt(), true)
+        addText(hero, if (recordingActive) "RECORDING IN PROGRESS" else "READY WHEN YOU ARE", 11f, 0xFFC9C5FF.toInt(), true)
         addSpace(hero, 10)
-        addText(hero, "Capture first. Understand next.", 22f, COLOR_WHITE, true)
-        addSpace(hero, 8)
-        addText(hero, "Start a real local recording when you are ready. You remain in control, and a persistent notification provides a stop action.", 14f, 0xFFE6E4FF.toInt())
-        addSpace(hero, 18)
+        addText(hero, if (recordingActive) "Your meeting is being captured." else "Capture the conversation.", 22f, COLOR_WHITE, true)
+        addSpace(hero, 7)
+        addText(hero, if (recordingActive) "Audio is saved locally on this device." else "Start recording when everyone is ready. Audio stays on this device.", 13f, 0xFFE6E4FF.toInt())
+        addSpace(hero, 16)
         if (recordingActive) {
-            addText(hero, "● RECORDING · " + recordingStatus, 13f, 0xFFFFD4A3.toInt(), true)
+            addText(hero, "● " + recordingStatus.replace('_', ' '), 12f, 0xFFFFD4A3.toInt(), true)
             addSpace(hero, 10)
             addButton(hero, "Stop recording", true) { stopRecordingService() }
         } else {
-            addButton(hero, "Start real recording", true) { confirmAndStartRecording() }
+            addButton(hero, "Start recording", true) { confirmAndStartRecording() }
         }
-        if (recordingError != null) {
-            addSpace(hero, 8)
-            addText(hero, recordingError!!, 13f, 0xFFFFC7C7.toInt())
-        }
-        addSpace(hero, 18)
-        addButton(hero, "Start demo session", true) {
-            workflowState = MeetingWorkflowReducer.reduce(
-                workflowState,
-                MeetingWorkflowAction.StartDemo(System.currentTimeMillis())
-            )
-            render()
-        }
-        addSpace(hero, 10)
-        addButton(hero, "Preview sample summary", false) {
-            workflowState = MeetingWorkflowReducer.reduce(workflowState, MeetingWorkflowAction.OpenSampleResults)
-            render()
-        }
-        addSpace(hero, 10)
-        addButton(hero, "View recordings", false) { showRecordings = true; render() }
-        addSpace(hero, 8)
-        addButton(hero, if (loadPersonalProfile().preferredName.isBlank()) "Set up personal profile" else "Edit personal profile", false) { promptPersonalProfile() }
-        addSpace(hero, 10)
-        val llmCard = card(hero, COLOR_SURFACE_ALT)
-        addText(llmCard, "Optional on-device AI", 17f, COLOR_TEXT, true)
-        addSpace(llmCard, 5)
-        addText(llmCard, "Check this phone's RAM, free storage, Android version and CPU architecture before considering a local language model. If it is unsuitable, deterministic offline summaries remain available.", 13f, COLOR_MUTED)
-        addSpace(llmCard, 8)
-        addButton(llmCard, "Check this phone's AI capability", true) { assessOnDeviceLlm() }
-        llmAssessmentMessage?.let { addSpace(llmCard, 8); addText(llmCard, it, 13f, COLOR_TEXT) }
-
-        addSpace(parent, 20)
-        addText(parent, "WHAT YOU'LL GET", 12f, COLOR_MUTED, true)
-        addSpace(parent, 10)
-        addFeatureCard(parent, "01", "Meeting summary", "The main discussion, decisions, and open questions in one place.")
-        addFeatureCard(parent, "02", "My action items", "Your follow-ups first, with evidence and uncertainty clearly shown.")
-        addFeatureCard(parent, "03", "Offline-first", "The core experience is designed to work without a cloud account.")
-        val notice = card(parent, COLOR_SURFACE_ALT)
-        addText(notice, "Privacy by default", 16f, COLOR_TEXT, true)
-        addSpace(notice, 5)
-        addText(notice, "Recording requires your explicit confirmation and microphone permission. Audio segments stay in app-private storage; no audio is uploaded.", 13f, COLOR_MUTED)
+        if (recordingError != null) { addSpace(hero, 8); addText(hero, recordingError!!, 13f, 0xFFFFC7C7.toInt()) }
+        addSpace(parent, 14)
+        val actions = card(parent, COLOR_SURFACE)
+        addText(actions, "Your meetings", 17f, COLOR_TEXT, true)
+        addSpace(actions, 5)
+        addText(actions, "Open saved audio and transcripts, or search across your meetings.", 13f, COLOR_MUTED)
+        addSpace(actions, 10)
+        addButton(actions, "View recordings", false) { showRecordings = true; render() }
+        addSpace(actions, 6)
+        addButton(actions, if (loadPersonalProfile().preferredName.isBlank()) "Set up personal profile" else "Edit personal profile", false) { promptPersonalProfile() }
+        addSpace(parent, 12)
+        addText(parent, "Private by design · Core recording and summaries work without a cloud account.", 12f, COLOR_MUTED, false, Gravity.CENTER)
     }
-
     private fun renderDemoActive(parent: LinearLayout) {
         addText(parent, "Demo session", 30f, COLOR_TEXT, true)
         addSpace(parent, 6)
@@ -469,55 +450,7 @@ class MainActivity : Activity() {
             addButton(searchCard, "Clear search", false) { transcriptSearchQuery = ""; render() }
         }
         addSpace(parent, 14)
-        val modelCard = card(parent, COLOR_SURFACE_ALT)
-        addText(modelCard, "Offline English transcription", 18f, COLOR_TEXT, true)
-        addSpace(modelCard, 5)
-        if (offlineModelManager.isInstalled()) {
-            addText(modelCard, "Model installed · transcription works without internet.", 13f, COLOR_PRIMARY_DARK)
-        } else {
-            addText(modelCard, "Model not installed. Download it once while connected; meeting audio is never uploaded.", 13f, COLOR_MUTED)
-        }
-        if (modelDownloadBusy) {
-            addSpace(modelCard, 8)
-            val spinner = ProgressBar(this).apply { isIndeterminate = true }
-            modelCard.addView(spinner, LinearLayout.LayoutParams(dp(36), dp(36)))
-            addSpace(modelCard, 6)
-            modelProgressLabel = addText(modelCard, modelInstallProgressText(), 13f, COLOR_PRIMARY_DARK, true)
-            modelProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 100
-                progress = modelDownloadPercent
-                isIndeterminate = false
-            }
-            modelCard.addView(modelProgressBar, matchWrapParams())
-            addSpace(modelCard, 4)
-            addText(modelCard, "Keep this screen open while the model files are installed. Meeting audio stays on this device.", 12f, COLOR_MUTED)
-        } else if (!offlineModelManager.isInstalled()) {
-            addSpace(modelCard, 8)
-            addButton(modelCard, "Download offline English model", true) { installOfflineModel() }
-        }
-        addSpace(parent, 12)
-        val whisperInstalled = runCatching { whisperModelManager.isInstalled() }.getOrDefault(false)
-        val languageCard = card(parent, COLOR_SURFACE_ALT)
-        addText(languageCard, "Language & models", 17f, COLOR_TEXT, true)
-        addSpace(languageCard, 4)
-        addText(languageCard, "${languageDisplayName(selectedLanguage())} · " + when { selectedEngine() == "whisper-multilingual" && whisperInstalled -> "Multilingual Whisper active"; selectedLanguage() != "en" -> "English active · extra model required"; else -> "Default English model active" }, 13f, COLOR_PRIMARY_DARK, true)
-        addText(languageCard, if (whisperInstalled) "Additional language model installed on this device." else "English works as usual. Optional multilingual model: 99 MiB download.", 12f, COLOR_MUTED)
-        addSpace(languageCard, 7)
-        addButton(languageCard, "Manage language & models", false) { showModelSettingsDialog() }
-        if (modelDownloadBusy && (modelInstallStage.contains("Whisper", true) || modelInstallStage.contains("encoder", true) || modelInstallStage.contains("decoder", true) || modelInstallStage.contains("tokens", true))) {
-            addSpace(languageCard, 6)
-            addText(languageCard, modelInstallProgressText(), 12f, COLOR_PRIMARY_DARK, true)
-            val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = modelDownloadPercent }
-            languageCard.addView(bar, matchWrapParams())
-        }
-        if (transcriptionMessage != null) {
-            addSpace(languageCard, 6)
-            addText(languageCard, transcriptionMessage!!, 12f, if (transcriptionMessage!!.startsWith("Transcription failed")) COLOR_WARNING else COLOR_PRIMARY_DARK)
-        }
-        if (transcriptionBusy) {
-            addSpace(modelCard, 8)
-            addText(modelCard, "Transcription is running. Keep the app installed; you can leave this screen open.", 12f, COLOR_MUTED)
-        }
+        if (transcriptionBusy) { addSpace(parent, 8); addText(parent, "Transcription is running. You can keep using the app.", 12f, COLOR_MUTED) }
         addSpace(parent, 18)
         val root = File(filesDir, "recordings")
         val sessions = root.listFiles()?.filter { it.isDirectory }?.sortedByDescending { it.lastModified() }.orEmpty()
@@ -583,40 +516,63 @@ class MainActivity : Activity() {
         addButton(parent, "Back to home", true) { showRecordings = false; render() }
     }
 
-    private fun showModelSettingsDialog() {
-        val installed = runCatching { whisperModelManager.isInstalled() }.getOrDefault(false)
-        val actions = mutableListOf<String>()
-        actions += "Change transcription language · ${languageDisplayName(selectedLanguage())}"
-        actions += if (installed) "Multilingual Whisper · installed (99 MiB)" else "Download multilingual Whisper Tiny · 99 MiB"
-        if (selectedEngine() == "whisper-multilingual") actions += "Switch back to default English model"
-        AlertDialog.Builder(this)
-            .setTitle("Language & models")
-            .setMessage("English remains the default and works without extra downloads. The optional multilingual model runs on-device and needs about 250 MiB free space.")
-            .setItems(actions.toTypedArray()) { dialog, which ->
-                when (actions[which].substringBefore(" · ")) {
-                    "Change transcription language" -> showLanguagePicker()
-                    "Multilingual Whisper", "Download multilingual Whisper Tiny" -> {
-                        if (installed) {
-                            Toast.makeText(this, "Multilingual Whisper is already installed.", Toast.LENGTH_SHORT).show()
-                        } else {
-                            installWhisperModel()
-                        }
-                    }
-                    "Switch back to default English model" -> {
-                        modelSelectionPreferences.edit()
-                            .putString("transcription_engine", "zipformer-en")
-                            .putString("transcription_language", "en")
-                            .apply()
-                        transcriptionMessage = "Using the default offline English Zipformer model."
-                        render()
-                    }
-                }
-                dialog.dismiss()
-            }
-            .setNegativeButton("Close", null)
-            .show()
+    private fun showAppMenu() {
+        AlertDialog.Builder(this).setItems(arrayOf("About this app", "Languages & models", "Saved recordings")) { dialog, which ->
+            when (which) { 0 -> showAboutApp(); 1 -> { showModelSettings = true; showRecordings = false; render() }; 2 -> { showRecordings = true; showModelSettings = false; render() } }
+            dialog.dismiss()
+        }.show()
     }
 
+    private fun showAboutApp() {
+        AlertDialog.Builder(this).setTitle("About Meeting Summarizer")
+            .setMessage("A private, offline-first meeting recorder. Recordings stay on this device. English transcription is the default; optional multilingual transcription can be installed when needed.")
+            .setPositiveButton("Languages & models") { _, _ -> showModelSettings = true; showRecordings = false; render() }
+            .setNegativeButton("Close", null).show()
+    }
+
+    private fun renderModelSettings(parent: LinearLayout) {
+        addText(parent, "Languages & models", 27f, COLOR_TEXT, true)
+        addSpace(parent, 5)
+        addText(parent, "Choose a transcription language and manage on-device speech models.", 13f, COLOR_MUTED)
+        addSpace(parent, 16)
+        val languageCard = card(parent, COLOR_SURFACE)
+        addText(languageCard, "Transcription language", 17f, COLOR_TEXT, true)
+        addSpace(languageCard, 5)
+        addText(languageCard, languageDisplayName(selectedLanguage()), 15f, COLOR_PRIMARY_DARK, true)
+        val whisperReady = runCatching { whisperModelManager.isInstalled() }.getOrDefault(false)
+        val activeDescription = if (selectedEngine() == "whisper-multilingual" && whisperReady) "Multilingual Whisper is active on this device." else if (selectedLanguage() == "en") "Default English model selected." else "English remains active until the multilingual model is installed and selected."
+        addText(languageCard, activeDescription, 12f, COLOR_MUTED)
+        addSpace(languageCard, 9)
+        addButton(languageCard, "Choose language", true) { showLanguagePicker() }
+        addSpace(parent, 12)
+        val englishCard = card(parent, COLOR_SURFACE)
+        addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
+        addText(englishCard, if (offlineModelManager.isInstalled()) "Installed · available offline" else "Not installed · download once to use offline", 12f, if (offlineModelManager.isInstalled()) COLOR_PRIMARY_DARK else COLOR_MUTED)
+        if (!offlineModelManager.isInstalled() && !modelDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
+        addSpace(parent, 12)
+        val whisperCard = card(parent, COLOR_SURFACE)
+        addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
+        addText(whisperCard, if (whisperReady) "Installed · about 99 MiB · works offline" else "Optional · about 99 MiB download · keep 250 MiB free for installation", 12f, if (whisperReady) COLOR_PRIMARY_DARK else COLOR_MUTED)
+        addSpace(whisperCard, 8)
+        if (!whisperReady && !modelDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
+        } else if (whisperReady && selectedEngine() != "whisper-multilingual") {
+            addButton(whisperCard, "Use multilingual model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply(); transcriptionMessage = "Multilingual Whisper selected for " + languageDisplayName(selectedLanguage()) + "."; render() }
+        } else if (whisperReady) {
+            addText(whisperCard, "Currently selected", 12f, COLOR_PRIMARY_DARK, true)
+            addButton(whisperCard, "Switch to default English model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "zipformer-en").putString("transcription_language", "en").apply(); transcriptionMessage = "Default English model selected."; render() }
+        }
+        if (modelDownloadBusy) {
+            addSpace(parent, 12)
+            val progressCard = card(parent, COLOR_SURFACE_ALT)
+            addText(progressCard, modelInstallProgressText(), 13f, COLOR_PRIMARY_DARK, true)
+            val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = modelDownloadPercent }
+            progressCard.addView(progress, matchWrapParams())
+            addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
+        }
+        if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
+        addSpace(parent, 20)
+        addButton(parent, "Back to home", true) { showModelSettings = false; render() }
+    }
     private fun languageDisplayName(code: String): String = when (code) {
         "en" -> "English"
         "hi" -> "Hindi"
@@ -695,6 +651,7 @@ class MainActivity : Activity() {
                     modelDownloadBusy = false
                     modelDownloadPercent = 100
                     modelInstallStage = "Whisper installed"
+                    showModelSettings = true
                     modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply()
                     transcriptionMessage = "Multilingual Whisper installed and checksum-verified. Selected language: ${languageDisplayName(selectedLanguage())}. It works offline."
                     if (!isFinishing) render()
@@ -703,6 +660,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     modelDownloadBusy = false
                     modelInstallStage = "Whisper installation failed"
+                    showModelSettings = true
                     transcriptionMessage = "Multilingual model download failed: " + (error.message ?: error.javaClass.simpleName)
                     if (!isFinishing) render()
                 }
