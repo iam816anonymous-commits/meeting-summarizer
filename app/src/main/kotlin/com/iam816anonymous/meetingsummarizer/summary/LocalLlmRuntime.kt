@@ -34,7 +34,7 @@ class LocalLlmRuntime(private val timeoutMs: Long = DEFAULT_TIMEOUT_MS) {
                         engine = candidate
                         initialized = true
                         val messages = candidate.createConversation().use { it.sendMessageAsync(prompt).toList() }
-                        val output = messages.joinToString(separator = "") { it.text }.trim()
+                        val output = messages.joinToString(separator = "") { it.toString() }.trim()
                         if (output.isEmpty()) LocalLlmResult.Failure("The model returned an empty response.")
                         else LocalLlmResult.Success(output, (System.nanoTime() - startedAt) / 1_000_000)
                     } finally {
