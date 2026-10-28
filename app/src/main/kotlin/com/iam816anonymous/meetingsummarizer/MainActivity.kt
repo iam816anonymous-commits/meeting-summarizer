@@ -216,7 +216,7 @@ class MainActivity : Activity() {
                 MeetingScreenState.RESULTS_READY -> renderResults(content)
             }
         }
-        if (!recordingActive && recordingStatus == RecordingLifecycleState.COMPLETED.name && !showRecordings) {
+        if (!recordingActive && recordingStatus == RecordingLifecycleState.COMPLETED.name && !showRecordings && !showModelSettings) {
             addSpace(content, 16)
             val saved = card(content, COLOR_TINT)
             addText(saved, "Recording stopped and saved", 19f, COLOR_PRIMARY_DARK, true)
@@ -237,8 +237,6 @@ class MainActivity : Activity() {
             addButton(activeRecording, "Stop recording", true) { stopRecordingService() }
         }
 
-        addSpace(content, 20)
-        addText(content, "PHASE 3 · EXPLICIT, LOCAL MICROPHONE RECORDING", 11f, COLOR_MUTED, true, Gravity.CENTER)
         setContentView(scroll)
     }
 
@@ -286,7 +284,7 @@ class MainActivity : Activity() {
     }
 
     private fun renderHome(parent: LinearLayout) {
-        addText(parent, "Meeting notes,\\nmade actionable.", 30f, COLOR_TEXT, true)
+        addText(parent, "Meeting notes,\nmade actionable.", 30f, COLOR_TEXT, true)
         addSpace(parent, 7)
         addText(parent, "Record a meeting, then review its transcript and follow-ups.", 14f, COLOR_MUTED)
         addSpace(parent, 20)
