@@ -758,6 +758,10 @@ class MainActivity : Activity() {
         if (transcriptionBusy || modelDownloadBusy) return
         val useWhisper = selectedEngine() == "whisper-multilingual"
         val language = selectedLanguage()
+        if (language != "en" && !useWhisper) {
+            Toast.makeText(this, "The English Zipformer model cannot transcribe ${languageDisplayName(language)}. Install and select multilingual Whisper first.", Toast.LENGTH_LONG).show()
+            return
+        }
         if (useWhisper && !whisperModelManager.isInstalled()) {
             Toast.makeText(this, "Download the multilingual Whisper model first.", Toast.LENGTH_LONG).show()
             return
