@@ -75,6 +75,18 @@ class DeterministicMeetingSummarizerTest {
     }
 
     @Test
+    fun extractsMultipleActionsFromRealPunctuationlessAsrChunk() {
+        val raw = "LET'S ALIGN ON THE PROJECT DELIVERABLES FOR THE NEXT SPRINT WE NEED TO PRIORITIZE STABILIZING THE CORE AUTONOMOUS ACCESSIBILITY SERVICE I NEED THE ARCHITECTURE TEAM TO FINALIZE THE PERMISSION MODELS BY THURSDAY FOR THE DEVELOPMENT TEAM THE PRIMARY FOCUS IS MIGRATING THE LEGACY JAVA WORKFLOWS OVER TO KOTLIN TO ENHANCE PERFORMANCE QA PLEASE BEGIN RUNNING REGRESSION TESTS ON THE LATEST BUILD BY FRIDAY AFTERNOON ALL DOCUMENTATION NEEDS TO BE UPDATED IN THE SHARED DRIVE SO EVERYONE IS ON THE SAME PAGE LET'S RECONVENE ON MONDAY TO REVIEW PROGRESS"
+        val summary = summarizer.summarize(listOf(TranscriptSegment("sample", 0, 0, 30_000, raw)))
+        assertTrue(summary.findings.any { it.kind == SummaryFindingKind.DEADLINE && it.deadlineText?.contains("THURSDAY", true) == true })
+        assertTrue(summary.findings.any { it.kind == SummaryFindingKind.DEADLINE && it.deadlineText?.contains("FRIDAY", true) == true })
+        assertTrue(summary.findings.any { it.kind == SummaryFindingKind.CANDIDATE_TASK && it.text.contains("REGRESSION", true) })
+        assertTrue(summary.findings.any { it.kind == SummaryFindingKind.CANDIDATE_TASK && it.text.contains("DOCUMENTATION", true) })
+        assertTrue(summary.findings.any { it.kind == SummaryFindingKind.CANDIDATE_TASK && it.text.contains("KOTLIN", true) })
+        assertTrue(summary.findings.all { it.evidence.quote.length < raw.length })
+    }
+
+    @Test
     fun nonFinalSegmentsAreIgnored() {
         val summary = summarizer.summarize(listOf(
             TranscriptSegment("m", 0, 0, 1000, "Please review the draft.", isFinal = false)

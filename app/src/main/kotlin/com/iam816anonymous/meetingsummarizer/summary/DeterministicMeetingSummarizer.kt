@@ -35,7 +35,7 @@ class DeterministicMeetingSummarizer {
                         if (deadline != null) add(SummaryFindingKind.DEADLINE)
                         if (commitment) add(SummaryFindingKind.COMMITMENT)
                         if (question) add(SummaryFindingKind.QUESTION)
-                        if (task && !question && !decision && !commitment && deadline == null) add(SummaryFindingKind.CANDIDATE_TASK)
+                        if (task && !question && !decision && !commitment) add(SummaryFindingKind.CANDIDATE_TASK)
                     }
                 }
                 kinds.forEach { kind ->
