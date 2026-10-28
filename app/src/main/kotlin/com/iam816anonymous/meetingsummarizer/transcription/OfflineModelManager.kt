@@ -30,6 +30,7 @@ class OfflineModelManager(context: Context) {
     @Throws(Exception::class)
     fun install(
         onProgress: (Int) -> Unit = {},
+        onBytesProgress: (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
         onStage: (String) -> Unit = {}
     ): File {
         if (isInstalled()) return modelDirectory()
@@ -49,7 +50,7 @@ class OfflineModelManager(context: Context) {
         try {
             onStage("Connecting to model host")
             onStage("Downloading model")
-            download(archive, onProgress)
+            download(archive, onProgress, onBytesProgress)
             onStage("Installing model files")
             extractSafely(archive, extraction)
             onStage("Verifying model")
@@ -79,7 +80,7 @@ class OfflineModelManager(context: Context) {
         }
     }
 
-    private fun download(destination: File, onProgress: (Int) -> Unit) {
+    private fun download(destination: File, onProgress: (Int) -> Unit, onBytesProgress: (Long, Long) -> Unit) {
         val connection = (URL(MODEL_ARCHIVE_URL).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
             readTimeout = 45_000
@@ -102,6 +103,7 @@ class OfflineModelManager(context: Context) {
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         copied += count
+                        onBytesProgress(copied, expected)
                         if (expected > 0L) onProgress(((copied * 100L) / expected).toInt().coerceIn(0, 99))
                     }
                 }

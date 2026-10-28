@@ -98,6 +98,8 @@ class MainActivity : Activity() {
     private var englishDownloadBusy = false
     private var whisperDownloadBusy = false
     private var englishDownloadPercent = 0
+    private var englishDownloadedBytes = 0L
+    private var englishTotalBytes = -1L
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
     private var lastEnglishUiUpdateMs = 0L
@@ -600,6 +602,11 @@ class MainActivity : Activity() {
         addText(whisperCard, if (whisperReady) "Installed · about 99 MiB · works offline" else "Optional · about 99 MiB download · keep 250 MiB free for installation", 12f, if (whisperReady) COLOR_PRIMARY_DARK else COLOR_MUTED)
         addSpace(whisperCard, 8)
         if (!whisperReady && !whisperDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
+        } else if (whisperDownloadBusy) {
+            addSpace(whisperCard, 8)
+            addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true)
+            if (!whisperDownloadStage.startsWith("Downloading ")) whisperCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
+            whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent }, matchWrapParams())
         } else if (whisperReady && selectedEngine() != "whisper-multilingual") {
             addButton(whisperCard, "Use multilingual model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply(); transcriptionMessage = "Multilingual Whisper selected for " + languageDisplayName(selectedLanguage()) + "."; render() }
         } else if (whisperReady) {
@@ -624,8 +631,10 @@ class MainActivity : Activity() {
             addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
                 addSpace(llmCard, 8)
-                addText(llmCard, (llmDownloadStage[model.id] ?: "Downloading") + " · " + (llmDownloadPercent[model.id] ?: 0) + "%", 12f, COLOR_PRIMARY_DARK, true)
+                addText(llmCard, (llmDownloadStage[model.id] ?: "Connecting") + " · " + (llmDownloadPercent[model.id] ?: 0) + "%", 12f, COLOR_PRIMARY_DARK, true)
+                if ((llmDownloadStage[model.id] ?: "Connecting") == "Connecting") llmCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
                 llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = llmDownloadPercent[model.id] ?: 0 }, matchWrapParams())
+                addText(llmCard, "Downloading and verifying locally. The button is disabled until the result is known.", 11f, COLOR_MUTED)
             } else if (installed) {
                 addSpace(llmCard, 8)
                 addButton(llmCard, if (model.id in llmTestBusy) "Testing model…" else "Test local model", false) {
@@ -708,7 +717,7 @@ class MainActivity : Activity() {
                     freeStorageBytes = StatFs(filesDir.absolutePath).availableBytes,
                     userOptedIn = true,
                     onProgress = { written, total ->
-                        val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 100) else 0
+                        val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 99) else 0
                         if (percent != llmDownloadPercent[model.id]) {
                             runOnUiThread {
                                 llmDownloadPercent[model.id] = percent
@@ -918,6 +927,8 @@ class MainActivity : Activity() {
         englishDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        englishDownloadedBytes = 0L
+        englishTotalBytes = -1L
         modelInstallStage = "Connecting to model host"
         transcriptionMessage = "Preparing the offline English model download…"
         render()
