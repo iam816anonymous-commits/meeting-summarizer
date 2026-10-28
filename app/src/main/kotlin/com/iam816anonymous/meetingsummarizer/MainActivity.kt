@@ -663,7 +663,7 @@ class MainActivity : Activity() {
                 addSpace(summaryCard, 8)
                 addText(summaryCard, summary.overview, 14f, COLOR_TEXT)
                 addSpace(summaryCard, 8)
-                addText(summaryCard, "Findings: \${summary.findings.size}", 12f, COLOR_PRIMARY_DARK, true)
+                addText(summaryCard, "Findings: ${summary.findings.size}", 12f, COLOR_PRIMARY_DARK, true)
                 if (summary.findings.isEmpty()) {
                     addSpace(summaryCard, 6)
                     addText(summaryCard, "No high-confidence decisions or action candidates were detected. Review the transcript manually; this does not mean the meeting had none.", 13f, COLOR_MUTED)
@@ -674,7 +674,7 @@ class MainActivity : Activity() {
                         addSpace(findingCard, 4)
                         addText(findingCard, finding.text, 14f, COLOR_TEXT, true)
                         addSpace(findingCard, 4)
-                        addText(findingCard, "Confidence: \${finding.confidence.name.lowercase()}", 11f, COLOR_MUTED)
+                        addText(findingCard, "Confidence: ${finding.confidence.name.lowercase()}", 11f, COLOR_MUTED)
                         if (finding.ambiguityNote != null) {
                             addSpace(findingCard, 4)
                             addText(findingCard, finding.ambiguityNote, 12f, COLOR_WARNING)
@@ -685,8 +685,8 @@ class MainActivity : Activity() {
                             finding.deadlineText?.let { addText(findingCard, "Deadline mentioned: $it", 12f, COLOR_MUTED) }
                         }
                         addSpace(findingCard, 6)
-                        addText(findingCard, "Evidence · \${formatTimestamp(finding.evidence.startMs)}–\${formatTimestamp(finding.evidence.endMs)} · segment #\${finding.evidence.sequence + 1}", 11f, COLOR_PRIMARY_DARK, true)
-                        addText(findingCard, "“\${finding.evidence.quote}”", 12f, COLOR_MUTED)
+                        addText(findingCard, "Evidence · ${formatTimestamp(finding.evidence.startMs)}–${formatTimestamp(finding.evidence.endMs)} · segment #${finding.evidence.sequence + 1}", 11f, COLOR_PRIMARY_DARK, true)
+                        addText(findingCard, "“${finding.evidence.quote}”", 12f, COLOR_MUTED)
                     }
                 }
                 addSpace(summaryCard, 8)
