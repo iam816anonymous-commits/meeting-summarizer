@@ -48,4 +48,6 @@ dependencies {
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation(libs.junit)
+    // Use a real JSON implementation in JVM unit tests instead of Android's mocked android.jar stubs.
+    testImplementation("org.json:json:20240303")
 }
