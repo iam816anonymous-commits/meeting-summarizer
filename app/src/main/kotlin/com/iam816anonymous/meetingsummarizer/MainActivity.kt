@@ -534,6 +534,8 @@ class MainActivity : Activity() {
         addText(parent, "Languages & models", 27f, COLOR_TEXT, true)
         addSpace(parent, 5)
         addText(parent, "Choose a transcription language and manage on-device speech models.", 13f, COLOR_MUTED)
+        addSpace(parent, 8)
+        addButton(parent, "Check device resources", false) { assessOnDeviceLlm() }
         addSpace(parent, 16)
         val languageCard = card(parent, COLOR_SURFACE)
         addText(languageCard, "Transcription language", 17f, COLOR_TEXT, true)
