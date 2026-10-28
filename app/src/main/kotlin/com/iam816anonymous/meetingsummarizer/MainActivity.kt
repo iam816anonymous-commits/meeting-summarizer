@@ -500,7 +500,7 @@ class MainActivity : Activity() {
         val languageCard = card(parent, COLOR_SURFACE_ALT)
         addText(languageCard, "Language & models", 17f, COLOR_TEXT, true)
         addSpace(languageCard, 4)
-        addText(languageCard, "${languageDisplayName(selectedLanguage())} · " + if (selectedEngine() == "whisper-multilingual" && whisperInstalled) "Multilingual Whisper active" else "English model active", 13f, COLOR_PRIMARY_DARK, true)
+        addText(languageCard, "${languageDisplayName(selectedLanguage())} · " + when { selectedEngine() == "whisper-multilingual" && whisperInstalled -> "Multilingual Whisper active"; selectedLanguage() != "en" -> "English active · extra model required"; else -> "Default English model active" }, 13f, COLOR_PRIMARY_DARK, true)
         addText(languageCard, if (whisperInstalled) "Additional language model installed on this device." else "English works as usual. Optional multilingual model: 99 MiB download.", 12f, COLOR_MUTED)
         addSpace(languageCard, 7)
         addButton(languageCard, "Manage language & models", false) { showModelSettingsDialog() }
