@@ -15,6 +15,7 @@ class TranscriptStore(context: Context) :
                 session_id TEXT NOT NULL, sequence INTEGER NOT NULL,
                 start_ms INTEGER NOT NULL, end_ms INTEGER NOT NULL, text TEXT NOT NULL,
                 speaker_label TEXT, confidence REAL, is_final INTEGER NOT NULL,
+                is_edited INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (session_id, sequence)
             )""".trimIndent()
         )
@@ -30,9 +31,31 @@ class TranscriptStore(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Additive migration: preserve all existing transcript and job rows.
-        if (oldVersion < 2) db.execSQL("ALTER TABLE transcript_segments ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0")
-        if (oldVersion > newVersion) throw IllegalStateException("Cannot downgrade database from $oldVersion to $newVersion")
+        if (oldVersion > newVersion) {
+            throw IllegalStateException("Cannot downgrade database from $oldVersion to $newVersion")
+        }
+        // Version 2's onCreate omitted is_edited, so some fresh version-2 databases
+        // were created without the column even though the version-1 migration added it.
+        // Inspect the real schema instead of relying only on oldVersion; this repairs
+        // both those databases and ordinary version-1 upgrades without touching rows.
+        ensureEditedColumn(db)
+    }
+
+    private fun ensureEditedColumn(db: SQLiteDatabase) {
+        val hasEditedColumn = db.rawQuery("PRAGMA table_info(transcript_segments)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            var found = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameIndex) == "is_edited") {
+                    found = true
+                    break
+                }
+            }
+            found
+        }
+        if (!hasEditedColumn) {
+            db.execSQL("ALTER TABLE transcript_segments ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     fun saveSegment(segment: TranscriptSegment) {
@@ -209,7 +232,7 @@ class TranscriptStore(context: Context) :
 
     companion object {
         private const val DATABASE_NAME = "meeting_transcripts.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
         private const val MAX_ERROR_LENGTH = 500
         private const val MAX_SEGMENT_TEXT_LENGTH = 10_000
         private const val MAX_SEARCH_RESULTS = 500
