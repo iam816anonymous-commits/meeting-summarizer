@@ -60,4 +60,21 @@ data class LocalLlmModel(
         val file = installedFile(directory)
         return file.isFile && file.length() == expectedBytes
     }
+
+    /** Expensive checksum validation; call only from a background thread. */
+    fun verifyInstalled(directory: java.io.File): Boolean {
+        val file = installedFile(directory)
+        if (!file.isFile || file.length() != expectedBytes) return false
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        return actual.equals(sha256, ignoreCase = true)
+    }
 }
