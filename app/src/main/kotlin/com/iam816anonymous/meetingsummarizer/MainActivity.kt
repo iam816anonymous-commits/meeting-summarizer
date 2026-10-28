@@ -638,6 +638,118 @@ class MainActivity : Activity() {
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
     }
+    private fun downloadLocalLlmModel(model: LocalLlmModel) {
+        if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
+        val freeBytes = StatFs(filesDir.absolutePath).availableBytes
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
+        if (Build.VERSION.SDK_INT < model.minAndroidApi || memoryInfo.availMem < model.minAvailableRamBytes) {
+            llmStatusMessage = "Download not started: current device RAM/API does not meet the conservative screening threshold for " + model.displayName + ". English transcription is unaffected."
+            render()
+            return
+        }
+        if (freeBytes < model.minFreeStorageBytes) {
+            llmStatusMessage = "Not enough free storage for " + model.displayName + ". Free at least " + formatBytes(model.minFreeStorageBytes) + " first."
+            render()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Download " + model.displayName + "?")
+            .setMessage("Download about 331 MiB over HTTPS, verify the exact file size and SHA-256, and store it locally. This model may still be too slow or memory-intensive on this phone.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Download") { _, _ -> startLlmModelDownload(model) }
+            .show()
+    }
+
+    private fun startLlmModelDownload(model: LocalLlmModel) {
+        if (!llmDownloadBusy.add(model.id)) return
+        llmDownloadPercent[model.id] = 0
+        llmDownloadStage[model.id] = "Connecting"
+        llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
+        render()
+        Thread {
+            val artifact = VerifiedModelArtifact(model.id, model.downloadUrl, model.fileName, model.expectedBytes, model.sha256)
+            val result = runBlocking {
+                llmDownloader.install(
+                    artifact = artifact,
+                    modelDirectory = llmModelDirectory(),
+                    freeStorageBytes = StatFs(filesDir.absolutePath).availableBytes,
+                    userOptedIn = true,
+                    onProgress = { written, total ->
+                        val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 100) else 0
+                        if (percent != llmDownloadPercent[model.id]) {
+                            runOnUiThread {
+                                llmDownloadPercent[model.id] = percent
+                                llmDownloadStage[model.id] = "Downloading and verifying"
+                                if (!isFinishing) render()
+                            }
+                        }
+                    }
+                )
+            }
+            runOnUiThread {
+                llmDownloadBusy.remove(model.id)
+                when (result) {
+                    is ModelInstallResult.Installed -> {
+                        llmDownloadPercent[model.id] = 100
+                        llmDownloadStage[model.id] = "Installed"
+                        llmStatusMessage = model.displayName + " downloaded and SHA-256 verified. Run Test local model before relying on it."
+                    }
+                    is ModelInstallResult.Rejected -> {
+                        llmDownloadStage[model.id] = "Failed"
+                        llmStatusMessage = model.displayName + " download failed: " + result.reason
+                    }
+                }
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
+    private fun testLocalLlmModel(model: LocalLlmModel) {
+        if (!llmTestBusy.add(model.id)) return
+        llmStatusMessage = "Loading " + model.displayName + " off the UI thread and running a short offline generation test…"
+        render()
+        Thread {
+            var engine: Engine? = null
+            var conversation: Conversation? = null
+            var initialized = false
+            var testError: String? = null
+            var output = ""
+            try {
+                val file = model.installedFile(llmModelDirectory())
+                require(file.isFile && file.length() == model.expectedBytes) { "Model file is missing or has the wrong size. Download it again." }
+                engine = Engine(EngineConfig(modelPath = file.absolutePath, backend = Backend.CPU(), cacheDir = cacheDir.absolutePath))
+                engine.initialize()
+                initialized = true
+                conversation = engine.createConversation(
+                    ConversationConfig(
+                        systemInstruction = Contents.of("You summarize meeting notes accurately. Do not invent facts."),
+                        samplerConfig = SamplerConfig(topK = 10, topP = 0.9, temperature = 0.2)
+                    )
+                )
+                runBlocking {
+                    conversation.sendMessageAsync("Summarize this note in one sentence: The team will review the budget on Friday and Maya owns the revised spreadsheet.")
+                        .collect { message -> output += message.toString() }
+                }
+                if (output.isBlank()) throw IllegalStateException("The model loaded but returned an empty response.")
+            } catch (error: Exception) {
+                testError = error.message ?: error.javaClass.simpleName
+            } finally {
+                runCatching { conversation?.close() }
+                if (initialized) runCatching { engine?.close() }
+            }
+            runOnUiThread {
+                llmTestBusy.remove(model.id)
+                llmStatusMessage = if (testError == null) {
+                    "Local generation test passed for " + model.displayName + ": " + output.take(240)
+                } else {
+                    "Local model test failed: " + testError + ". The deterministic summary fallback remains available."
+                }
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
     private fun languageDisplayName(code: String): String = when (code) {
         "en" -> "English"
         "hi" -> "Hindi"
