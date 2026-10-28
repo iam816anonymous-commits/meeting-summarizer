@@ -1,8 +1,9 @@
 # Meeting Summarizer Agent
 
-An offline-first Android meeting assistant. The user explicitly starts and stops each recording. The planned app will save a transcript, summarize decisions and open questions, and prioritize action items and discussion points relevant to the configured user profile.
+An offline-first Android meeting assistant. The user explicitly starts and stops each recording. The app stores transcripts locally, extracts evidence-linked decisions and candidate action items, and prioritizes actions relevant to the configured profile.
 
 ## Project status
+
 - [Research and phased build plan](docs/BUILD_PLAN.md)
 - [Phase 0 audit](docs/PHASE_0_AUDIT.md)
 - [Phase 1 audit](docs/PHASE_1_AUDIT.md)
@@ -13,22 +14,31 @@ An offline-first Android meeting assistant. The user explicitly starts and stops
 - [Phase 6 audit — deterministic offline summaries and evidence-linked findings](docs/PHASE_6_AUDIT.md)
 - [Phase 6 follow-up — punctuationless ASR regression fix](docs/PHASE_6_FOLLOWUP_AUDIT.md)
 - [Phase 7 audit — personal action items and progress UX](docs/PHASE_7_AUDIT.md)
-- [Phase 8 research — on-device LLM options and ASR-first recommendation](docs/PHASE_8_RESEARCH.md)
-- [Phase 8 implementation — adaptive on-device LLM feasibility gate](docs/PHASE_8_AUDIT.md)
-- **Current implementation:** Phase 8 feasibility gate — checks device resources before any future LLM trial. No LLM runtime/model is downloaded or integrated yet; unsuitable devices remain on deterministic offline summaries.
-- **Implemented:** native Android recording, app-private segmented audio, local English ASR integration, timestamped transcript persistence, transcript correction/search and meeting deletion, evidence-linked deterministic offline findings, and a conservative profile-based personal-action ranking flow.
-- **Validation note:** CI does not replace physical-device tests for offline recognition, migration/persistence, search, deletion, attribution quality, download/install progress, and notification behavior.
+- [Phase 8 research — local model and ASR evaluation](docs/PHASE_8_RESEARCH.md)
+- [Phase 8 audit — adaptive model profiles, optional runtime and safety scaffolding](docs/PHASE_8_AUDIT.md)
 
-## Product principles
+### Current implementation status
+
+- **Implemented:** recording lifecycle, local English ASR, timestamped transcript storage, transcript correction/search/deletion/recovery, deterministic evidence-linked summaries, and personal action-item ranking.
+- **Phase 8 scaffolding in this branch:** ordered resource profiles (smallest eligible tier first), LiteRT-LM adapter for installed `.litertlm` files, opt-in verified-download primitive, conservative output guard, and privacy-preserving benchmark aggregation.
+- **Not yet complete:** model artifact catalog with verified URLs/checksums/licenses, end-to-end install and inference UI, strict structured evidence validation, and real-phone benchmarks. The capability button assesses resource tiers; it does not yet download or execute a model.
+- **Fallback guarantee:** model failure or absence must never prevent access to the deterministic offline summary. No model is forced, and no model is downloaded automatically.
+- **Validation:** GitHub Actions runs unit tests, debug APK assembly, Android lint, APK verification and artifact upload. CI is not a substitute for physical-device testing.
+
+## Product and privacy principles
+
 - Recording is opt-in per meeting, visibly indicated, and easy to stop.
-- Local capture and saved data must not depend on network access.
-- Cloud AI is optional, disabled by default, and requires explicit opt-in.
+- Recording and deterministic summaries work locally and do not depend on network access.
+- Any model download requires explicit user action, HTTPS, a reviewed artifact checksum and sufficient free storage.
+- Cloud AI remains optional and disabled by default; local model inference must not send transcripts or audio over the network.
 - Extracted tasks must link to transcript evidence; uncertain ownership is labelled for review.
-- Never invent transcript text, speaker identities, owners, or deadlines.
-- Target low-memory Android devices; benchmark on the actual target phone before choosing models.
+- Never invent transcript text, speaker identities, owners or deadlines.
+- Model resource profiles are screening heuristics, not compatibility guarantees. Test each model on the actual device before offering it as supported.
 
 ## Build
+
 The project pins Android Gradle Plugin, Kotlin and Gradle versions. GitHub Actions assembles the debug APK, runs unit tests and Android lint, then publishes the APK as a workflow artifact. A verified Gradle Wrapper JAR and scripts are not yet committed; use Android Studio's Gradle tooling or CI until the wrapper can be generated and checked in.
 
 ## Privacy
-The Phase 2 demo does not request microphone permission and does not record audio. Future recording must be visibly indicated and must not start secretly or on boot. Only record meetings when permitted by applicable law, workplace policy, and participant consent requirements.
+
+Audio, transcripts and deterministic findings are stored locally. The app must not upload meeting audio or transcript text as part of local model inference. Only record meetings when permitted by applicable law, workplace policy and participant consent requirements.
