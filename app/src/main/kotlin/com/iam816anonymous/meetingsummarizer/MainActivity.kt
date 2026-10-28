@@ -40,6 +40,8 @@ import com.iam816anonymous.meetingsummarizer.summary.LocalModelRegistry
 import com.iam816anonymous.meetingsummarizer.summary.ModelDeviceSnapshot
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
+import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxWhisperSpeechEngine
+import com.iam816anonymous.meetingsummarizer.transcription.WhisperTinyModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SpeechEngineResult
 import com.iam816anonymous.meetingsummarizer.transcription.TranscriptStore
 import com.iam816anonymous.meetingsummarizer.data.DemoMeetingRepository
@@ -78,6 +80,10 @@ class MainActivity : Activity() {
     private var transcriptStore: TranscriptStore? = null
     private val offlineModelManager by lazy { OfflineModelManager(this) }
     private val speechEngine by lazy { SherpaOnnxEnglishSpeechEngine() }
+    private val whisperModelManager by lazy { WhisperTinyModelManager(this) }
+    private val modelSelectionPreferences by lazy { getSharedPreferences("model_selection", MODE_PRIVATE) }
+    private fun selectedLanguage(): String = modelSelectionPreferences.getString("transcription_language", "en") ?: "en"
+    private fun selectedEngine(): String = modelSelectionPreferences.getString("transcription_engine", "zipformer-en") ?: "zipformer-en"
 
     private val recordingStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -489,9 +495,46 @@ class MainActivity : Activity() {
             addSpace(modelCard, 8)
             addButton(modelCard, "Download offline English model", true) { installOfflineModel() }
         }
+        addSpace(parent, 12)
+        val languageCard = card(parent, COLOR_SURFACE_ALT)
+        addText(languageCard, "Transcription models & languages", 18f, COLOR_TEXT, true)
+        addSpace(languageCard, 5)
+        val languageName = languageDisplayName(selectedLanguage())
+        addText(languageCard, "Selected language: $languageName", 14f, COLOR_PRIMARY_DARK, true)
+        addText(languageCard, "Default stays English with the existing Zipformer model. Download the multilingual Whisper model once to enable additional language choices; speech recognition remains on-device.", 13f, COLOR_MUTED)
+        addSpace(languageCard, 8)
+        addButton(languageCard, "Change transcription language", false) { showLanguagePicker() }
+        addSpace(languageCard, 8)
+        val whisperInstalled = runCatching { whisperModelManager.isInstalled() }.getOrDefault(false)
+        addText(languageCard, if (whisperInstalled) "Multilingual Whisper · installed · 99 MiB" else "Multilingual Whisper Tiny · 99 MiB download · requires about 250 MiB free space", 13f, if (whisperInstalled) COLOR_PRIMARY_DARK else COLOR_TEXT, true)
+        if (!whisperInstalled && !modelDownloadBusy) {
+            addSpace(languageCard, 8)
+            addButton(languageCard, "Download multilingual language model", true) { installWhisperModel() }
+        } else if (modelDownloadBusy && modelInstallStage.contains("Whisper", true) || modelDownloadBusy && modelInstallStage.contains("encoder", true) || modelDownloadBusy && modelInstallStage.contains("decoder", true) || modelDownloadBusy && modelInstallStage.contains("tokens", true)) {
+            addSpace(languageCard, 8)
+            addText(languageCard, modelInstallProgressText(), 13f, COLOR_PRIMARY_DARK, true)
+            val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = modelDownloadPercent }
+            languageCard.addView(bar, matchWrapParams())
+        }
+        if (whisperInstalled && selectedEngine() == "whisper-multilingual") {
+            addSpace(languageCard, 8)
+            addText(languageCard, "Active transcription engine: Whisper · $languageName", 13f, COLOR_PRIMARY_DARK, true)
+            addButton(languageCard, "Switch back to default English model", false) {
+                modelSelectionPreferences.edit().putString("transcription_engine", "zipformer-en").putString("transcription_language", "en").apply()
+                transcriptionMessage = "Using the default offline English Zipformer model."
+                render()
+            }
+        } else if (whisperInstalled) {
+            addSpace(languageCard, 8)
+            addButton(languageCard, "Use multilingual Whisper for $languageName", true) {
+                modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply()
+                transcriptionMessage = "Using multilingual Whisper for $languageName. Select English to use English transcription."
+                render()
+            }
+        }
         if (transcriptionMessage != null) {
-            addSpace(modelCard, 8)
-            addText(modelCard, transcriptionMessage!!, 13f, if (transcriptionMessage!!.startsWith("Transcription failed")) COLOR_WARNING else COLOR_PRIMARY_DARK)
+            addSpace(languageCard, 8)
+            addText(languageCard, transcriptionMessage!!, 13f, if (transcriptionMessage!!.startsWith("Transcription failed")) COLOR_WARNING else COLOR_PRIMARY_DARK)
         }
         if (transcriptionBusy) {
             addSpace(modelCard, 8)
@@ -562,6 +605,99 @@ class MainActivity : Activity() {
         addButton(parent, "Back to home", true) { showRecordings = false; render() }
     }
 
+    private fun languageDisplayName(code: String): String = when (code) {
+        "en" -> "English"
+        "hi" -> "Hindi"
+        "te" -> "Telugu"
+        "kn" -> "Kannada"
+        "ta" -> "Tamil"
+        "ml" -> "Malayalam"
+        "bn" -> "Bengali"
+        "mr" -> "Marathi"
+        "gu" -> "Gujarati"
+        "ur" -> "Urdu"
+        "fr" -> "French"
+        "de" -> "German"
+        "es" -> "Spanish"
+        "ja" -> "Japanese"
+        "zh" -> "Chinese"
+        else -> code
+    }
+
+    private fun showLanguagePicker() {
+        val labels = arrayOf(
+            "English (en)", "Hindi (hi)", "Telugu (te)", "Kannada (kn)", "Tamil (ta)",
+            "Malayalam (ml)", "Bengali (bn)", "Marathi (mr)", "Gujarati (gu)", "Urdu (ur)",
+            "French (fr)", "German (de)", "Spanish (es)", "Japanese (ja)", "Chinese (zh)"
+        )
+        val codes = arrayOf("en", "hi", "te", "kn", "ta", "ml", "bn", "mr", "gu", "ur", "fr", "de", "es", "ja", "zh")
+        val current = codes.indexOf(selectedLanguage()).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Choose transcription language")
+            .setSingleChoiceItems(labels, current) { dialog, which ->
+                val code = codes[which]
+                modelSelectionPreferences.edit().putString("transcription_language", code).apply()
+                if (code != "en") {
+                    if (whisperModelManager.isInstalled()) {
+                        modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply()
+                        transcriptionMessage = "Selected ${languageDisplayName(code)} with multilingual Whisper."
+                    } else {
+                        transcriptionMessage = "${languageDisplayName(code)} selected. Download multilingual Whisper below to enable it; English remains available."
+                    }
+                } else {
+                    modelSelectionPreferences.edit().putString("transcription_engine", "zipformer-en").apply()
+                    transcriptionMessage = "English selected. The default English Zipformer model remains active."
+                }
+                dialog.dismiss()
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun installWhisperModel() {
+        if (modelDownloadBusy || transcriptionBusy) return
+        modelDownloadBusy = true
+        modelDownloadPercent = 0
+        modelInstallStage = "Preparing multilingual Whisper download"
+        transcriptionMessage = "Downloading verified multilingual Whisper model. English remains available."
+        render()
+        Thread {
+            try {
+                whisperModelManager.install(
+                    onProgress = { progress ->
+                        runOnUiThread {
+                            modelDownloadPercent = progress.percent.coerceIn(0, 100)
+                            modelInstallStage = "Whisper · ${progress.fileName}"
+                            if (!isFinishing) render()
+                        }
+                    },
+                    onStage = { stage ->
+                        runOnUiThread {
+                            modelInstallStage = stage
+                            if (!isFinishing) render()
+                        }
+                    }
+                )
+                runOnUiThread {
+                    modelDownloadBusy = false
+                    modelDownloadPercent = 100
+                    modelInstallStage = "Whisper installed"
+                    modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply()
+                    transcriptionMessage = "Multilingual Whisper installed and checksum-verified. Selected language: ${languageDisplayName(selectedLanguage())}. It works offline."
+                    if (!isFinishing) render()
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    modelDownloadBusy = false
+                    modelInstallStage = "Whisper installation failed"
+                    transcriptionMessage = "Multilingual model download failed: " + (error.message ?: error.javaClass.simpleName)
+                    if (!isFinishing) render()
+                }
+            }
+        }.start()
+    }
+
     private fun installOfflineModel() {
         if (modelDownloadBusy || transcriptionBusy) return
         modelDownloadBusy = true
@@ -620,7 +756,13 @@ class MainActivity : Activity() {
 
     private fun transcribeSession(session: File, audioFiles: List<File>) {
         if (transcriptionBusy || modelDownloadBusy) return
-        if (!offlineModelManager.isInstalled()) {
+        val useWhisper = selectedEngine() == "whisper-multilingual"
+        val language = selectedLanguage()
+        if (useWhisper && !whisperModelManager.isInstalled()) {
+            Toast.makeText(this, "Download the multilingual Whisper model first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!useWhisper && !offlineModelManager.isInstalled()) {
             Toast.makeText(this, "Download the offline English model first.", Toast.LENGTH_LONG).show()
             return
         }
@@ -646,10 +788,12 @@ class MainActivity : Activity() {
                     if (Thread.currentThread().isInterrupted) throw InterruptedException("Transcription cancelled.")
                     store.enqueueChunk(session.name, audio.absolutePath)
                     store.markChunkRunning(session.name, audio.absolutePath)
-                    val result = speechEngine.transcribe(
+                    val activeEngine = if (useWhisper) SherpaOnnxWhisperSpeechEngine(language, "tiny-multilingual") else speechEngine
+                    val activeModelDirectory = if (useWhisper) whisperModelManager.modelDirectory() else offlineModelManager.modelDirectory()
+                    val result = activeEngine.transcribe(
                         audioFile = audio,
                         sessionId = session.name,
-                        modelDirectory = offlineModelManager.modelDirectory(),
+                        modelDirectory = activeModelDirectory,
                         sequenceOffset = sequenceOffset,
                         timeOffsetMs = timeOffsetMs
                     ) { segment ->
