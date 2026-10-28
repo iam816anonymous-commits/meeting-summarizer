@@ -28,6 +28,7 @@ import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
 import java.io.File
 import android.os.StatFs
+import android.os.SystemClock
 import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
 import com.iam816anonymous.meetingsummarizer.summary.CloudAiSettingsStore
@@ -99,6 +100,8 @@ class MainActivity : Activity() {
     private var englishDownloadPercent = 0
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
+    private var lastEnglishUiUpdateMs = 0L
+    private var lastWhisperUiUpdateMs = 0L
     private var whisperDownloadStage = "Ready"
     private val llmDownloadBusy = mutableSetOf<String>()
     private val llmDownloadPercent = mutableMapOf<String, Int>()
@@ -590,7 +593,7 @@ class MainActivity : Activity() {
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
         addText(englishCard, if (offlineModelManager.isInstalled()) "Installed · available offline" else "Not installed · download once to use offline", 12f, if (offlineModelManager.isInstalled()) COLOR_PRIMARY_DARK else COLOR_MUTED)
         if (!offlineModelManager.isInstalled() && !englishDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
-        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent }, matchWrapParams()) }
+        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent; isIndeterminate = englishDownloadStage.contains("connect", true) || englishDownloadStage.contains("verify", true) }, matchWrapParams()) }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
@@ -647,7 +650,7 @@ class MainActivity : Activity() {
             progressCard.addView(progress, matchWrapParams())
             addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
         }
-        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent }, matchWrapParams()) }
+        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent; isIndeterminate = whisperDownloadStage.contains("connect", true) || whisperDownloadStage.contains("verify", true) }, matchWrapParams()) }
         if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Downloads continue while you navigate. Wait for both installations to finish before transcribing.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
@@ -864,12 +867,16 @@ class MainActivity : Activity() {
             try {
                 whisperModelManager.install(
                     onProgress = { progress ->
-                        runOnUiThread {
-                            modelDownloadPercent = progress.percent.coerceIn(0, 100)
-                            whisperDownloadPercent = modelDownloadPercent
-                            whisperDownloadStage = progress.fileName
-                            modelInstallStage = "Whisper · ${progress.fileName}"
-                            if (!isFinishing) render()
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastWhisperUiUpdateMs >= 1000L || progress.percent >= 100) {
+                            lastWhisperUiUpdateMs = now
+                            runOnUiThread {
+                                modelDownloadPercent = progress.percent.coerceIn(0, 100)
+                                whisperDownloadPercent = modelDownloadPercent
+                                whisperDownloadStage = progress.fileName
+                                modelInstallStage = "Whisper · ${progress.fileName}"
+                                if (!isFinishing) render()
+                            }
                         }
                     },
                     onStage = { stage ->
@@ -918,13 +925,17 @@ class MainActivity : Activity() {
             try {
                 offlineModelManager.install(
                     onProgress = { percent ->
-                        runOnUiThread {
-                            modelDownloadPercent = percent.coerceIn(0, 100)
-                            englishDownloadPercent = modelDownloadPercent
-                            englishDownloadStage = "Downloading"
-                            modelProgressLabel?.text = modelInstallProgressText()
-                            if (!isFinishing) render()
-                            modelProgressBar?.progress = modelDownloadPercent
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastEnglishUiUpdateMs >= 1000L || percent >= 100) {
+                            lastEnglishUiUpdateMs = now
+                            runOnUiThread {
+                                modelDownloadPercent = percent.coerceIn(0, 100)
+                                englishDownloadPercent = modelDownloadPercent
+                                englishDownloadStage = "Downloading"
+                                modelProgressLabel?.text = modelInstallProgressText()
+                                if (!isFinishing) render()
+                                modelProgressBar?.progress = modelDownloadPercent
+                            }
                         }
                     },
                     onStage = { stage ->
