@@ -50,6 +50,7 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.collect
 import com.iam816anonymous.meetingsummarizer.summary.ModelDeviceSnapshot
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
@@ -728,7 +729,7 @@ class MainActivity : Activity() {
                     )
                 )
                 runBlocking {
-                    conversation.sendMessageAsync("Summarize this note in one sentence: The team will review the budget on Friday and Maya owns the revised spreadsheet.")
+                    checkNotNull(conversation).sendMessageAsync("Summarize this note in one sentence: The team will review the budget on Friday and Maya owns the revised spreadsheet.")
                         .collect { message -> output += message.toString() }
                 }
                 if (output.isBlank()) throw IllegalStateException("The model loaded but returned an empty response.")
