@@ -12,6 +12,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.2.0"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     compileOptions {
@@ -22,6 +26,12 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+
+    packaging {
+        resources {
+            excludes += setOf("sherpa-onnx/native/**", "META-INF/DEPENDENCIES")
+        }
+    }
 }
 
 kotlin {
@@ -30,23 +40,12 @@ kotlin {
     }
 }
 
-android {
-    defaultConfig {
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-        }
-    }
-    packaging {
-        resources {
-            excludes += setOf("sherpa-onnx/native/**", "META-INF/DEPENDENCIES")
-        }
-    }
-}
-
 dependencies {
     implementation("com.github.k2-fsa:sherpa-onnx:v1.13.8") {
         exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
     }
     implementation("org.apache.commons:commons-compress:1.28.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation(libs.junit)
 }

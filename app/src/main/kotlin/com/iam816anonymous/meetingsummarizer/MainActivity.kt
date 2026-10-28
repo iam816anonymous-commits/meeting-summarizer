@@ -36,6 +36,8 @@ import com.iam816anonymous.meetingsummarizer.summary.PersonalActionItemClassifie
 import com.iam816anonymous.meetingsummarizer.summary.PersonalActionCategory
 import com.iam816anonymous.meetingsummarizer.summary.DeviceRuntimeSnapshot
 import com.iam816anonymous.meetingsummarizer.summary.OnDeviceLlmCapability
+import com.iam816anonymous.meetingsummarizer.summary.LocalModelRegistry
+import com.iam816anonymous.meetingsummarizer.summary.ModelDeviceSnapshot
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
 import com.iam816anonymous.meetingsummarizer.transcription.SpeechEngineResult
@@ -823,23 +825,39 @@ class MainActivity : Activity() {
         val memory = ActivityManager.MemoryInfo()
         manager.getMemoryInfo(memory)
         val storage = runCatching { StatFs(filesDir.absolutePath).availableBytes }.getOrDefault(0L)
-        val supportedAbi = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" || it == "armeabi-v7a" }
-        val snapshot = DeviceRuntimeSnapshot(Build.VERSION.SDK_INT, supportedAbi, memory.totalMem, memory.availMem, storage)
-        val assessment = OnDeviceLlmCapability().assess(snapshot)
+        val supportedAbis = Build.SUPPORTED_ABIS.toSet()
+        val snapshot = DeviceRuntimeSnapshot(
+            Build.VERSION.SDK_INT,
+            supportedAbis.any { it == "arm64-v8a" || it == "armeabi-v7a" },
+            memory.totalMem,
+            memory.availMem,
+            storage
+        )
+        val candidates = LocalModelRegistry().evaluate(
+            ModelDeviceSnapshot(Build.VERSION.SDK_INT, supportedAbis, memory.availMem, storage)
+        )
+        val firstEligible = candidates.firstOrNull { it.eligible }
         val message = buildString {
-            append(if (assessment.mayAttemptTrial) "PRELIMINARY RESULT: candidate for a controlled model trial.\n" else "PRELIMINARY RESULT: do not attempt an on-device LLM on this device right now.\n")
+            append("DEVICE SCREEN\n")
             append("Android API: ${snapshot.androidApi}\n")
             append("RAM: ${formatBytes(snapshot.totalRamBytes)} total; ${formatBytes(snapshot.availableRamBytes)} currently available\n")
-            append("Free storage: ${formatBytes(snapshot.freeStorageBytes)}\n")
-            if (assessment.reasons.isNotEmpty()) {
-                append("\nReasons:\n")
-                assessment.reasons.forEach { append("• ").append(it).append("\n") }
+            append("Free storage: ${formatBytes(snapshot.freeStorageBytes)}\n\n")
+            if (firstEligible == null) {
+                append("No model tier passes the current resource screen. Keep deterministic offline summaries.\n")
+            } else {
+                append("Smallest resource-eligible tier: ${firstEligible.profile.displayName}.\n")
+                append("This is only a screening result. A verified model artifact must be installed and its runtime trial must pass before use.\n")
             }
-            append("\nThis is a conservative resource screen, not proof of model/runtime compatibility. No LLM has been downloaded or started. The deterministic offline summary remains available.")
+            candidates.forEach { candidate ->
+                append("\n• ").append(candidate.profile.displayName).append(": ")
+                append(if (candidate.eligible) "resource-eligible candidate" else "not eligible")
+                if (candidate.reasons.isNotEmpty()) append(" — ").append(candidate.reasons.joinToString(" "))
+            }
+            append("\n\nThe app does not force model use. This assessment does not download a model or run inference. Deterministic offline findings remain available.")
         }
         llmAssessmentMessage = message
         AlertDialog.Builder(this)
-            .setTitle(if (assessment.mayAttemptTrial) "Device may be suitable for a trial" else "Keep deterministic offline mode")
+            .setTitle(if (firstEligible != null) "Smallest eligible model tier found" else "Keep deterministic offline mode")
             .setMessage(message)
             .setPositiveButton("OK") { _, _ -> render() }
             .show()
