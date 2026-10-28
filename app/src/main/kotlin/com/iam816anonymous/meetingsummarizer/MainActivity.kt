@@ -37,6 +37,19 @@ import com.iam816anonymous.meetingsummarizer.summary.PersonalActionCategory
 import com.iam816anonymous.meetingsummarizer.summary.DeviceRuntimeSnapshot
 import com.iam816anonymous.meetingsummarizer.summary.OnDeviceLlmCapability
 import com.iam816anonymous.meetingsummarizer.summary.LocalModelRegistry
+import com.iam816anonymous.meetingsummarizer.summary.LocalLlmModelCatalog
+import com.iam816anonymous.meetingsummarizer.summary.LocalLlmModel
+import com.iam816anonymous.meetingsummarizer.summary.VerifiedModelArtifact
+import com.iam816anonymous.meetingsummarizer.summary.VerifiedModelDownloader
+import com.iam816anonymous.meetingsummarizer.summary.ModelInstallResult
+import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Engine
+import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.SamplerConfig
+import kotlinx.coroutines.runBlocking
 import com.iam816anonymous.meetingsummarizer.summary.ModelDeviceSnapshot
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
@@ -77,6 +90,13 @@ class MainActivity : Activity() {
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
     private var whisperDownloadStage = "Ready"
+    private val llmDownloadBusy = mutableSetOf<String>()
+    private val llmDownloadPercent = mutableMapOf<String, Int>()
+    private val llmDownloadStage = mutableMapOf<String, String>()
+    private val llmTestBusy = mutableSetOf<String>()
+    private var llmStatusMessage: String? = null
+    private val llmDownloader by lazy { VerifiedModelDownloader() }
+    private fun llmModelDirectory(): File = File(filesDir, "llm-models")
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
     private var modelProgressBar: ProgressBar? = null
@@ -570,6 +590,40 @@ class MainActivity : Activity() {
             addText(whisperCard, "Currently selected", 12f, COLOR_PRIMARY_DARK, true)
             addButton(whisperCard, "Switch to default English model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "zipformer-en").putString("transcription_language", "en").apply(); transcriptionMessage = "Default English model selected."; render() }
         }
+        addSpace(parent, 18)
+        addText(parent, "On-device text models", 21f, COLOR_TEXT, true)
+        addSpace(parent, 5)
+        addText(parent, "Optional downloads for local summaries and structured meeting notes. Files are stored on this device and verified before they can be loaded.", 13f, COLOR_MUTED)
+        LocalLlmModelCatalog.models.forEach { model ->
+            addSpace(parent, 10)
+            val llmCard = card(parent, COLOR_SURFACE)
+            addText(llmCard, model.displayName, 16f, COLOR_TEXT, true)
+            addSpace(llmCard, 4)
+            addText(llmCard, model.description, 12f, COLOR_MUTED)
+            addSpace(llmCard, 5)
+            addText(llmCard, "Download: about 331 MiB · License: " + model.license, 12f, COLOR_MUTED)
+            val installed = model.isInstalled(llmModelDirectory())
+            addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
+            if (model.id in llmDownloadBusy) {
+                addSpace(llmCard, 8)
+                addText(llmCard, (llmDownloadStage[model.id] ?: "Downloading") + " · " + (llmDownloadPercent[model.id] ?: 0) + "%", 12f, COLOR_PRIMARY_DARK, true)
+                llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = llmDownloadPercent[model.id] ?: 0 }, matchWrapParams())
+            } else if (installed) {
+                addSpace(llmCard, 8)
+                addButton(llmCard, if (model.id in llmTestBusy) "Testing model…" else "Test local model", false) {
+                    if (model.id !in llmTestBusy) testLocalLlmModel(model)
+                }
+            } else {
+                addSpace(llmCard, 8)
+                addButton(llmCard, "Download model", false) { downloadLocalLlmModel(model) }
+            }
+        }
+        llmStatusMessage?.let {
+            addSpace(parent, 8)
+            addText(parent, it, 12f, if (it.contains("failed", true) || it.contains("not enough", true)) COLOR_WARNING else COLOR_PRIMARY_DARK)
+        }
+        addSpace(parent, 6)
+        addText(parent, "Compatibility note: RAM checks are estimates. These two files share Qwen3-0.6B base weights but use different response templates; they are not two different base models. The target phone must pass a real load and generation test before either is considered reliable.", 11f, COLOR_MUTED)
         if (modelDownloadBusy) {
             addSpace(parent, 12)
             val progressCard = card(parent, COLOR_SURFACE_ALT)
