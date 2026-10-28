@@ -596,7 +596,7 @@ class MainActivity : Activity() {
                     ) { segment ->
                         store.saveSegment(segment)
                         runOnUiThread {
-                            transcriptionMessage = "Transcribing \${audio.name} · \${segment.sequence + 1} text segment(s) saved…"
+                            transcriptionMessage = "Transcribing ${audio.name} · ${segment.sequence + 1} text segment(s) saved…"
                             if (!isFinishing) render()
                         }
                     }
@@ -613,7 +613,7 @@ class MainActivity : Activity() {
                     }
                     timeOffsetMs += audioDurationMs(audio)
                     runOnUiThread {
-                        transcriptionMessage = "Processed audio segment \${index + 1} of \${validFiles.size}…"
+                        transcriptionMessage = "Processed audio segment ${index + 1} of ${validFiles.size}…"
                         if (!isFinishing) render()
                     }
                 }
@@ -652,7 +652,7 @@ class MainActivity : Activity() {
             addSpace(empty, 6)
             addText(empty, transcriptionMessage ?: "Transcribe a completed recording to see its recognized speech here.", 13f, COLOR_MUTED)
         } else {
-            addText(parent, "\${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
+            addText(parent, "${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
             addSpace(parent, 10)
             if (summaryVisibleSessionId == sessionId) {
                 val summary = DeterministicMeetingSummarizer().summarize(segments)
@@ -700,7 +700,7 @@ class MainActivity : Activity() {
             addSpace(parent, 12)
             segments.forEach { segment ->
                 val item = card(parent, COLOR_SURFACE)
-                addText(item, "\${formatTimestamp(segment.startMs)} – \${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
+                addText(item, "${formatTimestamp(segment.startMs)} – ${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
                 addSpace(item, 6)
                 addText(item, segment.text, 15f, COLOR_TEXT)
                 addSpace(item, 8)
