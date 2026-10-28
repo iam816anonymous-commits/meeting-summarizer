@@ -657,6 +657,7 @@ class MainActivity : Activity() {
                     onStage = { stage ->
                         runOnUiThread {
                             modelInstallStage = stage
+                            whisperDownloadStage = stage
                             if (!isFinishing) render()
                         }
                     }
