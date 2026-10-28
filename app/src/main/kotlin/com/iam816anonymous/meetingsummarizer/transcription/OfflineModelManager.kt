@@ -28,10 +28,7 @@ class OfflineModelManager(context: Context) {
     }
 
     @Throws(Exception::class)
-    fun install(
-        onProgress: (Int) -> Unit = {},
-        onStage: (String) -> Unit = {}
-    ): File {
+    fun install(onProgress: (Int) -> Unit = {}): File {
         if (isInstalled()) return modelDirectory()
         val available = StatFs(appContext.filesDir.absolutePath).availableBytes
         if (available < MIN_INSTALL_SPACE_BYTES) {
@@ -47,12 +44,8 @@ class OfflineModelManager(context: Context) {
         if (!extraction.mkdirs()) throw IllegalStateException("Could not create a temporary model directory.")
 
         try {
-            onStage("Connecting to model host")
-            onStage("Downloading model")
             download(archive, onProgress)
-            onStage("Installing model files")
             extractSafely(archive, extraction)
-            onStage("Verifying model")
             val extracted = extraction.walkTopDown().firstOrNull {
                 it.isDirectory && it.name == MODEL_DIRECTORY
             } ?: throw IllegalStateException("The downloaded model archive did not contain the expected English model.")
@@ -71,7 +64,6 @@ class OfflineModelManager(context: Context) {
                 throw IllegalStateException("The installed English model failed its integrity check.")
             }
             onProgress(100)
-            onStage("Installed")
             return destination
         } finally {
             runCatching { archive.delete() }
