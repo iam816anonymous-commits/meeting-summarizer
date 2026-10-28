@@ -2,7 +2,6 @@ package com.iam816anonymous.meetingsummarizer.summary
 
 import org.junit.Assert.*
 import org.junit.Test
-import java.io.File
 
 class LocalLlmModelCatalogTest {
     @Test fun catalogHasTwoDirectDownloadOptionsInEveryResourceTier() {
@@ -80,7 +79,7 @@ class LocalLlmModelCatalogTest {
 
     @Test fun installedCheckRejectsFilesOutsideCatalogSizeBounds() {
         val model = LocalLlmModelCatalog.models.first()
-        val directory = createTempDir(prefix = "llm-catalog-test")
+        val directory = java.nio.file.Files.createTempDirectory("llm-catalog-test").toFile()
         try {
             val file = model.installedFile(directory)
             file.writeBytes(ByteArray(12))
