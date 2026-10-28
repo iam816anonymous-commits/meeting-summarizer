@@ -949,9 +949,21 @@ class MainActivity : Activity() {
                             }
                         }
                     },
+                    onBytesProgress = { written, total ->
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastEnglishUiUpdateMs >= 1000L || (total > 0L && written >= total)) {
+                            lastEnglishUiUpdateMs = now
+                            runOnUiThread {
+                                englishDownloadedBytes = written
+                                englishTotalBytes = total
+                                if (!isFinishing) render()
+                            }
+                        }
+                    },
                     onStage = { stage ->
                         runOnUiThread {
                             modelInstallStage = stage
+                            englishDownloadStage = stage
                             modelProgressLabel?.text = modelInstallProgressText()
                             if (!isFinishing) render()
                         }
@@ -1500,6 +1512,10 @@ class MainActivity : Activity() {
         mediaPlayer = null
         currentlyPlaying = null
     }
+
+    private fun downloadBytesLabel(downloaded: Long, total: Long): String =
+        if (total > 0L) "${formatBytes(downloaded)} of ${formatBytes(total)} downloaded"
+        else "${formatBytes(downloaded)} downloaded · total size not reported by server"
 
     private fun formatBytes(bytes: Long): String = when {
         bytes < 1024L -> "$bytes B"
