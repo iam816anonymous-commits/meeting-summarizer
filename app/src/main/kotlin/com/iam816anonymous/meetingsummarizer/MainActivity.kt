@@ -671,11 +671,8 @@ class MainActivity : Activity() {
         val freeBytes = StatFs(filesDir.absolutePath).availableBytes
         val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
-        if (Build.VERSION.SDK_INT < model.minAndroidApi || memoryInfo.totalMem < model.minTotalRamBytes || memoryInfo.availMem < model.minAvailableRamBytes || !model.supportsLanguage(selectedLanguage())) {
-            llmStatusMessage = "Download not started: current device RAM/API does not meet the conservative screening threshold for " + model.displayName + ". English transcription is unaffected."
-            render()
-            return
-        }
+        // Keep every catalog option downloadable; runtime suitability is handled by recommendations
+        // and the model-load smoke test, not by hiding or blocking the user's download choice.
         val concurrentReservation = llmDownloadBusy.sumOf { activeId ->
             (LocalLlmModelCatalog.models.firstOrNull { it.id == activeId }?.expectedBytes ?: 0L) +
                 VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
