@@ -649,8 +649,14 @@ class MainActivity : Activity() {
             render()
             return
         }
-        if (freeBytes < model.minFreeStorageBytes) {
-            llmStatusMessage = "Not enough free storage for " + model.displayName + ". Free at least " + formatBytes(model.minFreeStorageBytes) + " first."
+        val concurrentReservation = llmDownloadBusy.sumOf { activeId ->
+            (LocalLlmModelCatalog.models.firstOrNull { it.id == activeId }?.expectedBytes ?: 0L) +
+                VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
+        }
+        val requiredFreeBytes = concurrentReservation + model.expectedBytes + VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
+        if (freeBytes < maxOf(model.minFreeStorageBytes, requiredFreeBytes)) {
+            llmStatusMessage = "Not enough free storage for " + model.displayName +
+                " and the other active download(s). Required with working space: " + formatBytes(maxOf(model.minFreeStorageBytes, requiredFreeBytes)) + "."
             render()
             return
         }
@@ -718,7 +724,7 @@ class MainActivity : Activity() {
             var output = ""
             try {
                 val file = model.installedFile(llmModelDirectory())
-                require(file.isFile && file.length() == model.expectedBytes) { "Model file is missing or has the wrong size. Download it again." }
+                require(model.verifyInstalled(llmModelDirectory())) { "Model file failed SHA-256 verification. Download it again." }
                 engine = Engine(EngineConfig(modelPath = file.absolutePath, backend = Backend.CPU(), cacheDir = cacheDir.absolutePath))
                 engine.initialize()
                 initialized = true
