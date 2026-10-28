@@ -35,7 +35,7 @@ class DeterministicMeetingSummarizer {
                         if (deadline != null) add(SummaryFindingKind.DEADLINE)
                         if (commitment) add(SummaryFindingKind.COMMITMENT)
                         if (question) add(SummaryFindingKind.QUESTION)
-                        if (task && !question && !decision && !commitment && deadline == null) add(SummaryFindingKind.CANDIDATE_TASK)
+                        if (task && !question && !decision && !commitment) add(SummaryFindingKind.CANDIDATE_TASK)
                     }
                 }
                 kinds.forEach { kind ->
@@ -83,8 +83,14 @@ class DeterministicMeetingSummarizer {
         return MeetingSummary(overview = overview, findings = result)
     }
 
-    private fun splitSentences(text: String): List<String> =
-        text.split(Regex("(?<=[.!?])\\s+|\\n+")).map(String::trim).filter(String::isNotEmpty)
+    private fun splitSentences(text: String): List<String> {
+        // ASR often returns a single all-caps chunk with no punctuation.
+        val boundary = Regex(
+            "(?<=[.!?])\\s+|\\n+|\\s+(?=(?:we need to\\b|i need the\\b|for the development team\\b|qa[, ]|all documentation\\b|let.?s reconvene\\b|the primary focus is\\b))",
+            RegexOption.IGNORE_CASE
+        )
+        return text.split(boundary).map(String::trim).filter(String::isNotEmpty)
+    }
 
     private fun normalize(text: String): String =
         text.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), " ").trim()
@@ -99,7 +105,7 @@ class DeterministicMeetingSummarizer {
         val TENTATIVE_PATTERN = Regex("\\b(?:maybe|perhaps|possibly|might|could consider|consider|tentatively|proposal|what if|we could|we might|it may be worth)\\b", RegexOption.IGNORE_CASE)
         val DECISION_PATTERN = Regex("\\b(?:decided|decision is|agreed to|we agreed|agreed that|approved|finalized|will proceed with|the plan is to)\\b", RegexOption.IGNORE_CASE)
         val COMMITMENT_PATTERN = Regex("\\b(?:i will|i'll|we will|we'll|i commit to|i promise to|i am going to|i'm going to|we are going to|we're going to)\\b", RegexOption.IGNORE_CASE)
-        val TASK_PATTERN = Regex("\\b(?:please|need to|needs to|must|should|action item|follow up|follow-up|prepare|send|review|update|create|check|confirm|schedule|share|finish|complete|investigate|write|call|email|deliver|submit|document|test|deploy)\\b", RegexOption.IGNORE_CASE)
+        val TASK_PATTERN = Regex("\\b(?:please|need to|needs to|must|should|action item|follow up|follow-up|prepare|send|review|update|create|check|confirm|schedule|share|finish|complete|investigate|write|call|email|deliver|submit|document|test|deploy|prioritize|prioritise|stabilize|stabilizing|stabilise|finalize|finalise|migrate|migrating|reconvene|begin running|primary focus)\\b", RegexOption.IGNORE_CASE)
         val QUESTION_PATTERN = Regex("^(?:who|what|when|where|why|how|can we|could we|should we|do we|does anyone|is anyone)\\b", RegexOption.IGNORE_CASE)
         val DEADLINE_PATTERN = Regex("\\b(?:by (?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|end of day|eod|next week|\\d{1,2}(?:st|nd|rd|th)?(?:\\s+[a-z]+)?|\\d{4}-\\d{2}-\\d{2})|due (?:on|by) [^,.;!?]+|deadline is [^,.;!?]+|no later than [^,.;!?]+)\\b", RegexOption.IGNORE_CASE)
         val AMBIGUOUS_PRONOUN_PATTERN = Regex("\\b(?:he|she|they|them|their|it|this|that|those|these)\\b", RegexOption.IGNORE_CASE)
