@@ -19,6 +19,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -26,6 +27,11 @@ import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
 import java.io.File
 import java.util.Properties
+import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
+import com.iam816anonymous.meetingsummarizer.summary.SummaryFindingKind
+import com.iam816anonymous.meetingsummarizer.summary.PersonalProfile
+import com.iam816anonymous.meetingsummarizer.summary.PersonalActionItemClassifier
+import com.iam816anonymous.meetingsummarizer.summary.PersonalActionCategory
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
 import com.iam816anonymous.meetingsummarizer.transcription.SpeechEngineResult
@@ -53,8 +59,13 @@ class MainActivity : Activity() {
     private var currentlyPlaying: File? = null
     private var showTranscriptSessionId: String? = null
     private var transcriptSearchQuery: String = ""
+    private var summaryVisibleSessionId: String? = null
     private var modelDownloadBusy = false
     private var modelDownloadPercent = 0
+    private var modelInstallStage = "Preparing download"
+    private var modelProgressBar: ProgressBar? = null
+    private var modelProgressLabel: TextView? = null
+    private val profilePreferences by lazy { getSharedPreferences("personal_profile", MODE_PRIVATE) }
     private var transcriptionBusy = false
     private var transcriptionMessage: String? = null
     private var transcriptStore: TranscriptStore? = null
@@ -192,7 +203,7 @@ class MainActivity : Activity() {
         if (!recordingActive && recordingStatus == RecordingLifecycleState.COMPLETED.name && !showRecordings) {
             addSpace(content, 16)
             val saved = card(content, COLOR_TINT)
-            addText(saved, "Recording saved", 19f, COLOR_PRIMARY_DARK, true)
+            addText(saved, "Recording stopped and saved", 19f, COLOR_PRIMARY_DARK, true)
             addSpace(saved, 6)
             val files = latestRecordingFiles()
             val totalBytes = files.sumOf { it.length() }
@@ -287,6 +298,8 @@ class MainActivity : Activity() {
         }
         addSpace(hero, 10)
         addButton(hero, "View recordings", false) { showRecordings = true; render() }
+        addSpace(hero, 8)
+        addButton(hero, if (loadPersonalProfile().preferredName.isBlank()) "Set up personal profile" else "Edit personal profile", false) { promptPersonalProfile() }
 
         addSpace(parent, 20)
         addText(parent, "WHAT YOU'LL GET", 12f, COLOR_MUTED, true)
@@ -445,7 +458,18 @@ class MainActivity : Activity() {
         }
         if (modelDownloadBusy) {
             addSpace(modelCard, 8)
-            addText(modelCard, "Downloading and verifying model: $modelDownloadPercent%", 13f, COLOR_PRIMARY_DARK, true)
+            val spinner = ProgressBar(this).apply { isIndeterminate = true }
+            modelCard.addView(spinner, LinearLayout.LayoutParams(dp(36), dp(36)))
+            addSpace(modelCard, 6)
+            modelProgressLabel = addText(modelCard, modelInstallProgressText(), 13f, COLOR_PRIMARY_DARK, true)
+            modelProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = modelDownloadPercent
+                isIndeterminate = false
+            }
+            modelCard.addView(modelProgressBar, matchWrapParams())
+            addSpace(modelCard, 4)
+            addText(modelCard, "Keep this screen open while the model files are installed. Meeting audio stays on this device.", 12f, COLOR_MUTED)
         } else if (!offlineModelManager.isInstalled()) {
             addSpace(modelCard, 8)
             addButton(modelCard, "Download offline English model", true) { installOfflineModel() }
@@ -527,33 +551,56 @@ class MainActivity : Activity() {
         if (modelDownloadBusy || transcriptionBusy) return
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        modelInstallStage = "Connecting to model host"
         transcriptionMessage = "Preparing the offline English model download…"
         render()
         Thread {
             try {
-                offlineModelManager.install { percent ->
-                    runOnUiThread {
-                        if (percent == 100 || percent / 5 != modelDownloadPercent / 5) {
-                            modelDownloadPercent = percent
-                            transcriptionMessage = "Downloading and verifying offline English model…"
+                offlineModelManager.install(
+                    onProgress = { percent ->
+                        runOnUiThread {
+                            modelDownloadPercent = percent.coerceIn(0, 100)
+                            modelProgressLabel?.text = modelInstallProgressText()
+                            modelProgressBar?.progress = modelDownloadPercent
+                        }
+                    },
+                    onStage = { stage ->
+                        runOnUiThread {
+                            modelInstallStage = stage
+                            modelProgressLabel?.text = modelInstallProgressText()
                             if (!isFinishing) render()
                         }
                     }
-                }
+                )
                 runOnUiThread {
                     modelDownloadBusy = false
                     modelDownloadPercent = 100
+                    modelInstallStage = "Installed"
+                    modelProgressBar = null
+                    modelProgressLabel = null
                     transcriptionMessage = "English model installed. You can now transcribe with Airplane mode enabled."
                     if (!isFinishing) render()
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     modelDownloadBusy = false
+                    modelProgressBar = null
+                    modelProgressLabel = null
+                    modelInstallStage = "Installation failed"
                     transcriptionMessage = "Model installation failed: " + (error.message ?: error.javaClass.simpleName)
                     if (!isFinishing) render()
                 }
             }
         }.start()
+    }
+
+    private fun modelInstallProgressText(): String = when (modelInstallStage) {
+        "Downloading model" -> "Downloading English model — $modelDownloadPercent%"
+        "Installing model files" -> "Installing English model files…"
+        "Verifying model" -> "Verifying model files…"
+        "Installed" -> "English model installed."
+        "Installation failed" -> "Model installation failed."
+        else -> "$modelInstallStage…"
     }
 
     private fun transcribeSession(session: File, audioFiles: List<File>) {
@@ -593,7 +640,7 @@ class MainActivity : Activity() {
                     ) { segment ->
                         store.saveSegment(segment)
                         runOnUiThread {
-                            transcriptionMessage = "Transcribing \${audio.name} · \${segment.sequence + 1} text segment(s) saved…"
+                            transcriptionMessage = "Transcribing ${audio.name} · ${segment.sequence + 1} text segment(s) saved…"
                             if (!isFinishing) render()
                         }
                     }
@@ -610,7 +657,7 @@ class MainActivity : Activity() {
                     }
                     timeOffsetMs += audioDurationMs(audio)
                     runOnUiThread {
-                        transcriptionMessage = "Processed audio segment \${index + 1} of \${validFiles.size}…"
+                        transcriptionMessage = "Processed audio segment ${index + 1} of ${validFiles.size}…"
                         if (!isFinishing) render()
                     }
                 }
@@ -649,10 +696,95 @@ class MainActivity : Activity() {
             addSpace(empty, 6)
             addText(empty, transcriptionMessage ?: "Transcribe a completed recording to see its recognized speech here.", 13f, COLOR_MUTED)
         } else {
-            addText(parent, "\${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
+            addText(parent, "${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
+            addSpace(parent, 10)
+            if (summaryVisibleSessionId == sessionId) {
+                val summary = DeterministicMeetingSummarizer().summarize(segments)
+                val summaryCard = card(parent, COLOR_SURFACE_ALT)
+                addText(summaryCard, "Offline meeting summary", 19f, COLOR_TEXT, true)
+                addSpace(summaryCard, 5)
+                addText(summaryCard, "Rule-based extraction · no network or LLM · evidence linked", 12f, COLOR_MUTED)
+                addSpace(summaryCard, 8)
+                addText(summaryCard, summary.overview, 14f, COLOR_TEXT)
+                addSpace(summaryCard, 12)
+                addText(summaryCard, "My action items", 18f, COLOR_TEXT, true)
+                addText(summaryCard, "Profile matches are suggestions, not proof of speaker identity or ownership.", 12f, COLOR_MUTED)
+                addSpace(summaryCard, 6)
+                val personalProfile = loadPersonalProfile()
+                val personalCandidates = PersonalActionItemClassifier().classify(summary.findings, personalProfile)
+                if (personalCandidates.isEmpty()) {
+                    addText(summaryCard, "No likely personal action items were detected. You can still review all evidence-linked findings below.", 13f, COLOR_MUTED)
+                } else {
+                    personalCandidates.forEach { candidate ->
+                        val reviewKey = personalReviewKey(sessionId, candidate.finding)
+                        val reviewState = profilePreferences.getString(reviewKey, "NEEDS_REVIEW") ?: "NEEDS_REVIEW"
+                        val personalCard = card(summaryCard, COLOR_SURFACE)
+                        addText(personalCard, candidate.category.displayName, 11f, COLOR_PRIMARY_DARK, true)
+                        addSpace(personalCard, 4)
+                        addText(personalCard, candidate.finding.text, 14f, COLOR_TEXT, true)
+                        addSpace(personalCard, 4)
+                        addText(personalCard, "Review status: " + reviewState.replace('_', ' ').lowercase().replaceFirstChar { it.uppercase() }, 11f, if (reviewState == "CONFIRMED") COLOR_PRIMARY_DARK else COLOR_MUTED)
+                        addText(personalCard, candidate.explanation, 12f, COLOR_MUTED)
+                        addText(personalCard, "Evidence · ${formatTimestamp(candidate.finding.evidence.startMs)} · “${candidate.finding.evidence.quote}”", 12f, COLOR_MUTED)
+                        if (reviewState == "NEEDS_REVIEW") {
+                            addSpace(personalCard, 6)
+                            addButton(personalCard, "Confirm as my action item", true) {
+                                profilePreferences.edit().putString(reviewKey, "CONFIRMED").apply()
+                                render()
+                            }
+                            addSpace(personalCard, 4)
+                            addButton(personalCard, "Not mine / reject", false) {
+                                profilePreferences.edit().putString(reviewKey, "REJECTED").apply()
+                                render()
+                            }
+                        } else {
+                            addSpace(personalCard, 4)
+                            addButton(personalCard, "Reset review", false) {
+                                profilePreferences.edit().remove(reviewKey).apply()
+                                render()
+                            }
+                        }
+                    }
+                }
+                addSpace(summaryCard, 12)
+                addText(summaryCard, "All evidence-linked findings: ${summary.findings.size}", 12f, COLOR_PRIMARY_DARK, true)
+                if (summary.findings.isEmpty()) {
+                    addSpace(summaryCard, 6)
+                    addText(summaryCard, "No high-confidence decisions or action candidates were detected. Review the transcript manually; this does not mean the meeting had none.", 13f, COLOR_MUTED)
+                } else {
+                    summary.findings.forEach { finding ->
+                        val findingCard = card(summaryCard, COLOR_SURFACE)
+                        addText(findingCard, finding.kind.displayName, 11f, COLOR_PRIMARY_DARK, true)
+                        addSpace(findingCard, 4)
+                        addText(findingCard, finding.text, 14f, COLOR_TEXT, true)
+                        addSpace(findingCard, 4)
+                        addText(findingCard, "Confidence: ${finding.confidence.name.lowercase()}", 11f, COLOR_MUTED)
+                        if (finding.ambiguityNote != null) {
+                            addSpace(findingCard, 4)
+                            addText(findingCard, finding.ambiguityNote, 12f, COLOR_WARNING)
+                        }
+                        if (finding.explicitActor != null || finding.deadlineText != null) {
+                            addSpace(findingCard, 4)
+                            finding.explicitActor?.let { addText(findingCard, "Explicit speaker wording: $it", 12f, COLOR_MUTED) }
+                            finding.deadlineText?.let { addText(findingCard, "Deadline mentioned: $it", 12f, COLOR_MUTED) }
+                        }
+                        addSpace(findingCard, 6)
+                        addText(findingCard, "Evidence · ${formatTimestamp(finding.evidence.startMs)}–${formatTimestamp(finding.evidence.endMs)} · segment #${finding.evidence.sequence + 1}", 11f, COLOR_PRIMARY_DARK, true)
+                        addText(findingCard, "“${finding.evidence.quote}”", 12f, COLOR_MUTED)
+                    }
+                }
+                addSpace(summaryCard, 8)
+                addButton(summaryCard, "Hide summary", false) { summaryVisibleSessionId = null; render() }
+            } else {
+                addButton(parent, "Generate offline summary", true) {
+                    summaryVisibleSessionId = sessionId
+                    render()
+                }
+            }
+            addSpace(parent, 12)
             segments.forEach { segment ->
                 val item = card(parent, COLOR_SURFACE)
-                addText(item, "\${formatTimestamp(segment.startMs)} – \${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
+                addText(item, "${formatTimestamp(segment.startMs)} – ${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
                 addSpace(item, 6)
                 addText(item, segment.text, 15f, COLOR_TEXT)
                 addSpace(item, 8)
@@ -671,6 +803,46 @@ class MainActivity : Activity() {
             showRecordings = true
             render()
         }
+    }
+
+    private fun loadPersonalProfile(): PersonalProfile = PersonalProfile(
+        preferredName = profilePreferences.getString("preferred_name", "").orEmpty(),
+        aliases = profilePreferences.getString("aliases", "").orEmpty().split(',').map(String::trim).filter(String::isNotBlank),
+        workContext = profilePreferences.getString("work_context", "").orEmpty()
+    )
+
+    private fun personalReviewKey(sessionId: String, finding: com.iam816anonymous.meetingsummarizer.summary.SummaryFinding): String =
+        "review_${sessionId}_${finding.kind.name}_${finding.evidence.sequence}_${finding.text.hashCode()}"
+
+    private fun promptPersonalProfile() {
+        val profile = loadPersonalProfile()
+        val nameField = EditText(this).apply { hint = "Preferred name (optional)"; setText(profile.preferredName); setSingleLine(true) }
+        val aliasesField = EditText(this).apply { hint = "Aliases, separated by commas"; setText(profile.aliases.joinToString(", ")); setSingleLine(false); minLines = 2 }
+        val contextField = EditText(this).apply { hint = "Work context / project keywords (optional)"; setText(profile.workContext); setSingleLine(false); minLines = 2 }
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            addView(nameField, matchWrapParams())
+            addView(aliasesField, matchWrapParams())
+            addView(contextField, matchWrapParams())
+        }
+        AlertDialog.Builder(this).setTitle("Personal action-item profile")
+            .setMessage("Saved only on this device. Names help find possible assignments, but do not identify the speaker or prove ownership. Leave any field blank if you prefer.")
+            .setView(fields).setNegativeButton("Cancel", null)
+            .setPositiveButton("Save profile") { _, _ ->
+                profilePreferences.edit()
+                    .putString("preferred_name", nameField.text?.toString()?.trim().orEmpty())
+                    .putString("aliases", aliasesField.text?.toString()?.trim().orEmpty())
+                    .putString("work_context", contextField.text?.toString()?.trim().orEmpty())
+                    .apply()
+                Toast.makeText(this, "Personal profile saved on this device.", Toast.LENGTH_SHORT).show()
+                render()
+            }
+            .setNeutralButton("Clear profile") { _, _ ->
+                profilePreferences.edit().clear().apply()
+                Toast.makeText(this, "Personal profile cleared.", Toast.LENGTH_SHORT).show()
+                render()
+            }.show()
     }
 
     private fun promptTranscriptSearch() {
