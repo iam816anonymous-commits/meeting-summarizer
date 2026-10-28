@@ -35,7 +35,7 @@ class LocalLlmModelCatalogTest {
 
     @Test fun unsupportedLanguagesAreNotRecommended() {
         val candidates = LocalLlmModelCatalog.recommendations(
-            languageCode = "te",
+            languageCode = "xx",
             androidApi = 35,
             totalRamBytes = 8L * 1024 * 1024 * 1024,
             availableRamBytes = 7L * 1024 * 1024 * 1024,

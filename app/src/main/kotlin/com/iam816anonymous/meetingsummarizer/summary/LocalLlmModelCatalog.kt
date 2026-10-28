@@ -16,15 +16,17 @@ object LocalLlmModelCatalog {
     private const val QWEN17_INT8_REVISION = "4b46d76"
     private const val MB = 1024L * 1024L
     private const val GB = 1024L * MB
+    // Qwen3 is a multilingual family; these language options are candidates, not a claim of tested summary quality.
+    private val QWEN_LANGUAGES = setOf("en", "hi", "te", "kn", "ta", "ml", "bn", "mr", "gu", "ur", "fr", "de", "es", "ja", "zh")
 
     val models = listOf(
         LocalLlmModel(
             id = "qwen3-0.6b-nothink-int4",
             displayName = "Qwen3 0.6B · Direct answers",
-            description = "Very small quantized model for concise notes. Same Qwen3-0.6B base as the reasoning variant.",
+            description = "Very small quantized model for concise notes. Qwen3 is multilingual; quality for each language still needs device testing. Same base as the reasoning variant.",
             tierLabel = "Very small",
             estimatedDownloadSize = "331 MiB",
-            supportedLanguages = setOf("en", "zh"),
+            supportedLanguages = QWEN_LANGUAGES,
             fileName = "qwen3_0.6b_nothink_q4_block32_ekv1280.litertlm",
             downloadUrl = "https://huggingface.co/litert-community/Qwen3-0.6B-int4/resolve/$QWEN06_REVISION/qwen3_0.6b_nothink_q4_block32_ekv1280.litertlm",
             expectedBytes = 347_251_840L,
@@ -44,7 +46,7 @@ object LocalLlmModelCatalog {
             description = "Same base weights with a reasoning-style template; may be slower and produce longer responses.",
             tierLabel = "Very small",
             estimatedDownloadSize = "331 MiB",
-            supportedLanguages = setOf("en", "zh"),
+            supportedLanguages = QWEN_LANGUAGES,
             fileName = "qwen3_0.6b_q4_block32_ekv1280.litertlm",
             downloadUrl = "https://huggingface.co/litert-community/Qwen3-0.6B-int4/resolve/$QWEN06_REVISION/qwen3_0.6b_q4_block32_ekv1280.litertlm",
             expectedBytes = 347_251_840L,
@@ -101,10 +103,10 @@ object LocalLlmModelCatalog {
         LocalLlmModel(
             id = "qwen3-1.7b-int4",
             displayName = "Qwen3 1.7B · INT4",
-            description = "Medium-tier Qwen3 model with a smaller quantized artifact. Not recommended on most 4 GB phones.",
+            description = "Medium-tier multilingual Qwen3 model with a smaller quantized artifact. Not recommended on most 4 GB phones; language quality is not yet benchmarked here.",
             tierLabel = "Medium",
             estimatedDownloadSize = "about 977 MB",
-            supportedLanguages = setOf("en", "zh"),
+            supportedLanguages = QWEN_LANGUAGES,
             fileName = "Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm",
             downloadUrl = "https://huggingface.co/litert-community/Qwen3-1.7B/resolve/$QWEN17_INT4_REVISION/Qwen3-1.7B_dynamic_wi4b32_afp32.litertlm",
             expectedBytes = 1_050_000_000L,
@@ -121,10 +123,10 @@ object LocalLlmModelCatalog {
         LocalLlmModel(
             id = "qwen3-1.7b-int8",
             displayName = "Qwen3 1.7B · INT8",
-            description = "Higher-memory medium-tier Qwen3 artifact. Requires substantially more RAM and storage; CPU latency may be high.",
+            description = "Higher-memory multilingual Qwen3 artifact. Requires substantially more RAM and storage; CPU latency may be high and language quality is not yet benchmarked here.",
             tierLabel = "Medium",
             estimatedDownloadSize = "about 2.06 GB",
-            supportedLanguages = setOf("en", "zh"),
+            supportedLanguages = QWEN_LANGUAGES,
             fileName = "Qwen3_1.7B.litertlm",
             downloadUrl = "https://huggingface.co/litert-community/Qwen3-1.7B/resolve/$QWEN17_INT8_REVISION/Qwen3_1.7B.litertlm",
             expectedBytes = 2_250_000_000L,
