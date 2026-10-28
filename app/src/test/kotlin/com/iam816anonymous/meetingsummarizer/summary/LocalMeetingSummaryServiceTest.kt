@@ -3,12 +3,11 @@ package com.iam816anonymous.meetingsummarizer.summary
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.iam816anonymous.meetingsummarizer.transcription.TranscriptSegment
-import java.io.File
 
 class LocalMeetingSummaryServiceTest {
     @Test fun rejectsTranscriptThatExceedsSmallModelBudgetWithoutCallingRuntime() {
         val model = LocalLlmModelCatalog.models.first()
-        val dir = createTempDir(prefix = "summary-service-test")
+        val dir = java.nio.file.Files.createTempDirectory("summary-service-test").toFile()
         try {
             val service = LocalMeetingSummaryService()
             val segments = listOf(TranscriptSegment("session", 0, 0, 1000, "The team will review the budget on Friday."))
@@ -19,7 +18,7 @@ class LocalMeetingSummaryServiceTest {
 
     @Test fun rejectsMissingOrCorruptModelWithoutInference() {
         val model = LocalLlmModelCatalog.models.first()
-        val dir = createTempDir(prefix = "summary-service-test")
+        val dir = java.nio.file.Files.createTempDirectory("summary-service-test").toFile()
         try {
             model.installedFile(dir).writeText("not a model")
             val service = LocalMeetingSummaryService()
