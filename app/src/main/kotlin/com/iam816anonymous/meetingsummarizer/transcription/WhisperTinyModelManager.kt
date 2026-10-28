@@ -18,14 +18,25 @@ class WhisperTinyModelManager(context: Context) {
     data class Progress(val fileName: String, val percent: Int)
 
     fun modelDirectory(): File = root
+    /**
+     * Fast UI-safe installed check. Full SHA-256 validation is performed during installation,
+     * not on every Activity render (hashing ~100 MiB on the main thread can freeze or crash
+     * low-memory phones).
+     */
     fun isInstalled(): Boolean = ARTIFACTS.all { artifact ->
+        val file = File(root, artifact.localName)
+        file.isFile && file.length() == artifact.bytes
+    }
+
+    /** Expensive integrity check for a background worker or diagnostic screen only. */
+    fun verifyInstalled(): Boolean = ARTIFACTS.all { artifact ->
         val file = File(root, artifact.localName)
         file.isFile && file.length() == artifact.bytes && sha256(file).equals(artifact.sha256, true)
     }
 
     @Throws(Exception::class)
     fun install(onProgress: (Progress) -> Unit = {}, onStage: (String) -> Unit = {}): File {
-        if (isInstalled()) return root
+        if (verifyInstalled()) return root
         val free = StatFs(appContext.filesDir.absolutePath).availableBytes
         if (free < REQUIRED_FREE_BYTES) {
             throw IllegalStateException("Multilingual Whisper needs about 250 MB free for download, verification and model files.")
