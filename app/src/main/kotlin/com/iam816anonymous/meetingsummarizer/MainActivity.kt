@@ -41,6 +41,8 @@ import com.iam816anonymous.meetingsummarizer.summary.DeviceRuntimeSnapshot
 import com.iam816anonymous.meetingsummarizer.summary.OnDeviceLlmCapability
 import com.iam816anonymous.meetingsummarizer.summary.LocalModelRegistry
 import com.iam816anonymous.meetingsummarizer.summary.LocalLlmModelCatalog
+import com.iam816anonymous.meetingsummarizer.summary.LocalMeetingSummaryService
+import com.iam816anonymous.meetingsummarizer.summary.MeetingLlmSummaryResult
 import com.iam816anonymous.meetingsummarizer.summary.LocalLlmModel
 import com.iam816anonymous.meetingsummarizer.summary.VerifiedModelArtifact
 import com.iam816anonymous.meetingsummarizer.summary.VerifiedModelDownloader
@@ -103,6 +105,9 @@ class MainActivity : Activity() {
     private val llmDownloadStage = mutableMapOf<String, String>()
     private val llmTestBusy = mutableSetOf<String>()
     private var llmStatusMessage: String? = null
+    private val llmSummaryBusy = mutableSetOf<String>()
+    private val llmSummaryResults = mutableMapOf<String, MeetingLlmSummaryResult>()
+    private val localMeetingSummaryService by lazy { LocalMeetingSummaryService() }
     private val llmDownloader by lazy { VerifiedModelDownloader() }
     private fun llmModelDirectory(): File = File(filesDir, "llm-models")
     private var modelDownloadPercent = 0
@@ -719,6 +724,29 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun generateLocalMeetingSummary(
+        sessionId: String,
+        segments: List<com.iam816anonymous.meetingsummarizer.transcription.TranscriptSegment>,
+        model: LocalLlmModel
+    ) {
+        if (!llmSummaryBusy.add(sessionId)) return
+        render()
+        Thread {
+            val result = try {
+                localMeetingSummaryService.summarize(model, llmModelDirectory(), segments)
+            } catch (error: Exception) {
+                MeetingLlmSummaryResult.Fallback(
+                    error.message ?: "Local AI summary failed unexpectedly."
+                )
+            }
+            runOnUiThread {
+                llmSummaryBusy.remove(sessionId)
+                llmSummaryResults[sessionId] = result
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
     private fun testLocalLlmModel(model: LocalLlmModel) {
         if (!llmTestBusy.add(model.id)) return
         llmStatusMessage = "Loading " + model.displayName + " off the UI thread and running a short offline generation test…"
@@ -1086,6 +1114,41 @@ class MainActivity : Activity() {
                                 render()
                             }
                         }
+                    }
+                }
+                addSpace(summaryCard, 12)
+                val installedLlm = LocalLlmModelCatalog.models.firstOrNull { it.isInstalled(llmModelDirectory()) }
+                when (val llmResult = llmSummaryResults[sessionId]) {
+                    is MeetingLlmSummaryResult.Accepted -> {
+                        val aiCard = card(summaryCard, COLOR_SURFACE)
+                        addText(aiCard, "AI-enhanced local summary", 17f, COLOR_TEXT, true)
+                        addSpace(aiCard, 4)
+                        addText(aiCard, llmResult.modelName + " · evidence check passed · " + llmResult.elapsedMs + " ms", 11f, COLOR_PRIMARY_DARK, true)
+                        addSpace(aiCard, 8)
+                        addText(aiCard, llmResult.text, 14f, COLOR_TEXT)
+                    }
+                    is MeetingLlmSummaryResult.Fallback -> {
+                        val aiCard = card(summaryCard, COLOR_SURFACE)
+                        addText(aiCard, "AI summary unavailable", 15f, COLOR_TEXT, true)
+                        addSpace(aiCard, 4)
+                        addText(aiCard, llmResult.reason + " The deterministic evidence-linked summary above remains available.", 12f, COLOR_MUTED)
+                    }
+                    null -> Unit
+                }
+                addSpace(summaryCard, 8)
+                when {
+                    sessionId in llmSummaryBusy -> {
+                        addText(summaryCard, "Local AI summary is running off the UI thread…", 12f, COLOR_PRIMARY_DARK, true)
+                        summaryCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
+                    }
+                    installedLlm != null -> addButton(summaryCard, "Generate AI-enhanced summary", false) {
+                        generateLocalMeetingSummary(sessionId, segments, installedLlm)
+                    }
+                    else -> addButton(summaryCard, "Download a local AI model", false) {
+                        showTranscriptSessionId = null
+                        showModelSettings = true
+                        showRecordings = false
+                        render()
                     }
                 }
                 addSpace(summaryCard, 12)
