@@ -36,7 +36,7 @@ class WhisperTinyModelManager(context: Context) {
 
     @Throws(Exception::class)
     fun install(onProgress: (Progress) -> Unit = {}, onStage: (String) -> Unit = {}): File {
-        if (isInstalled()) return root
+        if (verifyInstalled()) return root
         val free = StatFs(appContext.filesDir.absolutePath).availableBytes
         if (free < REQUIRED_FREE_BYTES) {
             throw IllegalStateException("Multilingual Whisper needs about 250 MB free for download, verification and model files.")
