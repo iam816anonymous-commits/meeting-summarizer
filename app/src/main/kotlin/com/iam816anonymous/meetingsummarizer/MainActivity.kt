@@ -627,6 +627,7 @@ class MainActivity : Activity() {
             addText(llmCard, model.tierLabel + " tier · Download " + model.estimatedDownloadSize + " · License: " + model.license, 12f, COLOR_MUTED)
             val recommendedForDevice = recommendedLocalLlmModels(selectedLanguage()).any { it.id == model.id }
             val readiness = modelDownloadReadiness(model)
+            val installed = model.isInstalled(llmModelDirectory())
             addText(llmCard, when {
                 installed -> "Installed · size verified"
                 readiness.first && recommendedForDevice -> "Eligible by resource screen · runtime still unverified"
@@ -637,7 +638,6 @@ class MainActivity : Activity() {
                 addSpace(llmCard, 4)
                 addText(llmCard, readiness.second, 12f, COLOR_WARNING)
             }
-            val installed = model.isInstalled(llmModelDirectory())
             addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
                 addSpace(llmCard, 8)
@@ -917,19 +917,6 @@ class MainActivity : Activity() {
                                 whisperDownloadPercent = modelDownloadPercent
                                 whisperDownloadStage = progress.fileName
                                 modelInstallStage = "Whisper · ${progress.fileName}"
-                                if (!isFinishing) render()
-                            }
-                        }
-                    },
-                    onBytesProgress = { written, total ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastEnglishUiUpdateMs >= 750L || (total > 0L && written >= total)) {
-                            lastEnglishUiUpdateMs = now
-                            runOnUiThread {
-                                englishDownloadedBytes = written
-                                englishTotalBytes = total
-                                if (total > 0L) englishDownloadPercent = ((written * 100L) / total).toInt().coerceIn(0, 99)
-                                modelDownloadPercent = englishDownloadPercent
                                 if (!isFinishing) render()
                             }
                         }
