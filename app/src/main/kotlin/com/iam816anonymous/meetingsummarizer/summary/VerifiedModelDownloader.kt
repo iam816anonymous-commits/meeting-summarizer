@@ -113,7 +113,7 @@ class VerifiedModelDownloader {
     }.getOrDefault(false)
 
     companion object {
-        const val MAX_MODEL_BYTES = 2500L * 1024 * 1024
+        const val MAX_MODEL_BYTES = 10L * 1024 * 1024 * 1024
         const val MIN_WORKING_SPACE_BYTES = 256L * 1024 * 1024
         const val CONNECT_TIMEOUT_MS = 15_000
         const val READ_TIMEOUT_MS = 30_000

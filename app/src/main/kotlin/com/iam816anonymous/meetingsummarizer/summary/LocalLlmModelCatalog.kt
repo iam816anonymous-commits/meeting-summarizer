@@ -139,6 +139,86 @@ object LocalLlmModelCatalog {
             minAvailableRamBytes = 3L * GB,
             minFreeStorageBytes = 2700L * MB,
             estimatedPeakRamBytes = 4L * GB
+        ),
+        LocalLlmModel(
+            id = "qwen3-4b-mixed-int4",
+            displayName = "Qwen3 4B · Mixed INT4",
+            description = "Large multilingual model with mixed INT4 weights. Requires high memory and several gigabytes of storage; not suitable for most 4 GB phones.",
+            tierLabel = "Large",
+            estimatedDownloadSize = "about 2.66 GB",
+            supportedLanguages = QWEN_LANGUAGES,
+            fileName = "qwen3_4b_mixed_int4.litertlm",
+            downloadUrl = "https://huggingface.co/litert-community/Qwen3-4B/resolve/2f7415b/qwen3_4b_mixed_int4.litertlm",
+            expectedBytes = 3_000_000_000L,
+            minimumBytes = 2_500_000_000L,
+            sizeIsExact = false,
+            sha256 = "569fe029f51e55b6377f98ebd7f6d26431bc73e1d632034f5389f2fd720da701",
+            license = "Apache-2.0",
+            minAndroidApi = 26,
+            minTotalRamBytes = 12L * GB,
+            minAvailableRamBytes = 6L * GB,
+            minFreeStorageBytes = 3300L * MB,
+            estimatedPeakRamBytes = 6L * GB
+        ),
+        LocalLlmModel(
+            id = "qwen3-4b-channelwise-int8",
+            displayName = "Qwen3 4B · Channelwise INT8",
+            description = "Higher-precision Large-tier artifact from the same Qwen3 4B family; requires substantially more RAM and storage.",
+            tierLabel = "Large",
+            estimatedDownloadSize = "about 5.67 GB",
+            supportedLanguages = QWEN_LANGUAGES,
+            fileName = "qwen3_4b_channelwise_int8_float32kv.litertlm",
+            downloadUrl = "https://huggingface.co/litert-community/Qwen3-4B/resolve/4d54595/qwen3_4b_channelwise_int8_float32kv.litertlm",
+            expectedBytes = 6_200_000_000L,
+            minimumBytes = 5_300_000_000L,
+            sizeIsExact = false,
+            sha256 = "3a44aeffa0a3b02b453215f77440069f98efc015c600cb6520b2a01109f4c063",
+            license = "Apache-2.0",
+            minAndroidApi = 26,
+            minTotalRamBytes = 16L * GB,
+            minAvailableRamBytes = 8L * GB,
+            minFreeStorageBytes = 6500L * MB,
+            estimatedPeakRamBytes = 8L * GB
+        ),
+        LocalLlmModel(
+            id = "qwen3-8b-mixed-int4",
+            displayName = "Qwen3 8B · Mixed INT4",
+            description = "Very large multilingual model with mixed INT4 weights. Requires high-end device memory and more than 5 GB of free storage.",
+            tierLabel = "Very large",
+            estimatedDownloadSize = "about 4.89 GB",
+            supportedLanguages = QWEN_LANGUAGES,
+            fileName = "qwen3_8b_mixed_int4.litertlm",
+            downloadUrl = "https://huggingface.co/litert-community/Qwen3-8B/resolve/17bed0e/qwen3_8b_mixed_int4.litertlm",
+            expectedBytes = 5_400_000_000L,
+            minimumBytes = 4_600_000_000L,
+            sizeIsExact = false,
+            sha256 = "cb4e6d0de4bbf6656d177812cf0c6a983967dedd17e7f88e84b901c3a9862a42",
+            license = "Apache-2.0",
+            minAndroidApi = 26,
+            minTotalRamBytes = 20L * GB,
+            minAvailableRamBytes = 10L * GB,
+            minFreeStorageBytes = 5700L * MB,
+            estimatedPeakRamBytes = 10L * GB
+        ),
+        LocalLlmModel(
+            id = "qwen3-8b-channelwise-int8",
+            displayName = "Qwen3 8B · Channelwise INT8",
+            description = "Largest catalog artifact with channelwise INT8 weights. Requires very high memory and over 8 GB of model storage; not suitable for ordinary phones.",
+            tierLabel = "Very large",
+            estimatedDownloadSize = "about 8.31 GB",
+            supportedLanguages = QWEN_LANGUAGES,
+            fileName = "qwen3_8b_channelwise_int8_float32kv.litertlm",
+            downloadUrl = "https://huggingface.co/litert-community/Qwen3-8B/resolve/9984555/qwen3_8b_channelwise_int8_float32kv.litertlm",
+            expectedBytes = 9_100_000_000L,
+            minimumBytes = 8_000_000_000L,
+            sizeIsExact = false,
+            sha256 = "2c24953f2ade203216d6588376dbabcecdd0aebac11667d4c24f1819e418e82c",
+            license = "Apache-2.0",
+            minAndroidApi = 26,
+            minTotalRamBytes = 24L * GB,
+            minAvailableRamBytes = 16L * GB,
+            minFreeStorageBytes = 9500L * MB,
+            estimatedPeakRamBytes = 16L * GB
         )
     )
 
@@ -163,7 +243,10 @@ object LocalLlmModelCatalog {
     private fun tierRank(label: String): Int = when (label) {
         "Very small" -> 0
         "Small" -> 1
-        else -> 2
+        "Medium" -> 2
+        "Large" -> 3
+        "Very large" -> 4
+        else -> Int.MAX_VALUE
     }
 }
 
