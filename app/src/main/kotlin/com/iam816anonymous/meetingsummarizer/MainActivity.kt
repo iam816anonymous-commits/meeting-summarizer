@@ -669,8 +669,6 @@ class MainActivity : Activity() {
     private fun downloadLocalLlmModel(model: LocalLlmModel) {
         if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
         val freeBytes = StatFs(filesDir.absolutePath).availableBytes
-        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-        val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
         // Keep every catalog option downloadable; runtime suitability is handled by recommendations
         // and the model-load smoke test, not by hiding or blocking the user's download choice.
         val concurrentReservation = llmDownloadBusy.sumOf { activeId ->
