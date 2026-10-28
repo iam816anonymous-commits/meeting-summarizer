@@ -17,6 +17,7 @@ An offline-first Android meeting assistant. The user explicitly starts and stops
 - [Phase 8 research — local model and ASR evaluation](docs/PHASE_8_RESEARCH.md)
 - [Phase 8 audit — adaptive model profiles, optional runtime and safety scaffolding](docs/PHASE_8_AUDIT.md)
 - [Model artifact research — exact files, sizes, checksums, language candidates and integration gates](docs/MODEL_ARTIFACT_RESEARCH.md)
+- [Phase 10 audit — model download responsiveness and diagnostics](docs/PHASE_10_MODEL_DOWNLOAD_UI_AUDIT.md)
 
 ### Current implementation status
 
@@ -25,6 +26,23 @@ An offline-first Android meeting assistant. The user explicitly starts and stops
 - **Implemented on the model-options branch:** recordings screen now has a language picker and explicit download for a pinned multilingual Whisper Tiny pack; all three files are checked against exact byte counts and SHA-256 before activation. Transcription dispatch uses the selected Whisper language/model, blocks non-English transcription through the English-only engine, and preserves the English Zipformer as the default. **Still incomplete:** in-app Qwen download/selection and model-backed summary integration, more language-specific fine-tuned packs, strict structured evidence validation, and real-phone benchmarks. Whisper Tiny is a multilingual baseline, not a promise of equal accuracy for every language. The capability button still assesses resource tiers; it does not yet download or execute a text-generation model.
 - **Fallback guarantee:** model failure or absence must never prevent access to the deterministic offline summary. No model is forced, and no model is downloaded automatically.
 - **Validation:** GitHub Actions runs unit tests, debug APK assembly, Android lint, APK verification and artifact upload. CI is not a substitute for physical-device testing.
+
+### Current phase and release blockers
+
+- **Current phase:** Phase 10 — reliability, privacy and performance hardening.
+- **Latest code status:** the model-download responsiveness patch is merged to `main`; latest CI is green. The UI now has download stages, progress indicators and byte-count reporting where the host supplies a content length.
+- **Not yet proven:** CI cannot prove that the model host is reachable on the phone's mobile/Wi-Fi network, that the full archive downloads and extracts on-device, or that the installed model works offline. Do not treat model installation as device-accepted until the checklist below passes.
+
+### Pending acceptance checklist
+
+- [ ] English Zipformer: tap download and confirm the screen stays responsive.
+- [ ] Confirm the Connecting stage changes to Downloading and the downloaded-byte count increases; confirm an indeterminate indicator is shown when total size is unknown.
+- [ ] Confirm installation and verification stages complete, the UI reports success only after verification, and the model remains installed after app restart.
+- [ ] Enable Airplane mode and transcribe a short English recording successfully.
+- [ ] Test a failed/blocked connection and confirm a clear error and a working retry path.
+- [ ] Repeat progress, error and verification checks for multilingual Whisper and one optional text model.
+- [ ] Validate stop-notification cleanup, transcript correction/search/deletion, profile/review persistence, and low-storage/interrupted-process behavior on the actual phone.
+- [ ] Record device model, Android version, available storage, download outcome/time, and any failure text in the Phase 10 audit before closing this phase.
 
 ## Product and privacy principles
 
