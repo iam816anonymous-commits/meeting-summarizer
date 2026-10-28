@@ -26,6 +26,8 @@ import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
 import java.io.File
 import java.util.Properties
+import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
+import com.iam816anonymous.meetingsummarizer.summary.SummaryFindingKind
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
 import com.iam816anonymous.meetingsummarizer.transcription.SpeechEngineResult
@@ -53,6 +55,7 @@ class MainActivity : Activity() {
     private var currentlyPlaying: File? = null
     private var showTranscriptSessionId: String? = null
     private var transcriptSearchQuery: String = ""
+    private var summaryVisibleSessionId: String? = null
     private var modelDownloadBusy = false
     private var modelDownloadPercent = 0
     private var transcriptionBusy = false
@@ -593,7 +596,7 @@ class MainActivity : Activity() {
                     ) { segment ->
                         store.saveSegment(segment)
                         runOnUiThread {
-                            transcriptionMessage = "Transcribing \${audio.name} · \${segment.sequence + 1} text segment(s) saved…"
+                            transcriptionMessage = "Transcribing ${audio.name} · ${segment.sequence + 1} text segment(s) saved…"
                             if (!isFinishing) render()
                         }
                     }
@@ -610,7 +613,7 @@ class MainActivity : Activity() {
                     }
                     timeOffsetMs += audioDurationMs(audio)
                     runOnUiThread {
-                        transcriptionMessage = "Processed audio segment \${index + 1} of \${validFiles.size}…"
+                        transcriptionMessage = "Processed audio segment ${index + 1} of ${validFiles.size}…"
                         if (!isFinishing) render()
                     }
                 }
@@ -649,10 +652,55 @@ class MainActivity : Activity() {
             addSpace(empty, 6)
             addText(empty, transcriptionMessage ?: "Transcribe a completed recording to see its recognized speech here.", 13f, COLOR_MUTED)
         } else {
-            addText(parent, "\${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
+            addText(parent, "${segments.size} saved text segment(s)", 13f, COLOR_MUTED)
+            addSpace(parent, 10)
+            if (summaryVisibleSessionId == sessionId) {
+                val summary = DeterministicMeetingSummarizer().summarize(segments)
+                val summaryCard = card(parent, COLOR_SURFACE_ALT)
+                addText(summaryCard, "Offline meeting summary", 19f, COLOR_TEXT, true)
+                addSpace(summaryCard, 5)
+                addText(summaryCard, "Rule-based extraction · no network or LLM · evidence linked", 12f, COLOR_MUTED)
+                addSpace(summaryCard, 8)
+                addText(summaryCard, summary.overview, 14f, COLOR_TEXT)
+                addSpace(summaryCard, 8)
+                addText(summaryCard, "Findings: ${summary.findings.size}", 12f, COLOR_PRIMARY_DARK, true)
+                if (summary.findings.isEmpty()) {
+                    addSpace(summaryCard, 6)
+                    addText(summaryCard, "No high-confidence decisions or action candidates were detected. Review the transcript manually; this does not mean the meeting had none.", 13f, COLOR_MUTED)
+                } else {
+                    summary.findings.forEach { finding ->
+                        val findingCard = card(summaryCard, COLOR_SURFACE)
+                        addText(findingCard, finding.kind.displayName, 11f, COLOR_PRIMARY_DARK, true)
+                        addSpace(findingCard, 4)
+                        addText(findingCard, finding.text, 14f, COLOR_TEXT, true)
+                        addSpace(findingCard, 4)
+                        addText(findingCard, "Confidence: ${finding.confidence.name.lowercase()}", 11f, COLOR_MUTED)
+                        if (finding.ambiguityNote != null) {
+                            addSpace(findingCard, 4)
+                            addText(findingCard, finding.ambiguityNote, 12f, COLOR_WARNING)
+                        }
+                        if (finding.explicitActor != null || finding.deadlineText != null) {
+                            addSpace(findingCard, 4)
+                            finding.explicitActor?.let { addText(findingCard, "Explicit speaker wording: $it", 12f, COLOR_MUTED) }
+                            finding.deadlineText?.let { addText(findingCard, "Deadline mentioned: $it", 12f, COLOR_MUTED) }
+                        }
+                        addSpace(findingCard, 6)
+                        addText(findingCard, "Evidence · ${formatTimestamp(finding.evidence.startMs)}–${formatTimestamp(finding.evidence.endMs)} · segment #${finding.evidence.sequence + 1}", 11f, COLOR_PRIMARY_DARK, true)
+                        addText(findingCard, "“${finding.evidence.quote}”", 12f, COLOR_MUTED)
+                    }
+                }
+                addSpace(summaryCard, 8)
+                addButton(summaryCard, "Hide summary", false) { summaryVisibleSessionId = null; render() }
+            } else {
+                addButton(parent, "Generate offline summary", true) {
+                    summaryVisibleSessionId = sessionId
+                    render()
+                }
+            }
+            addSpace(parent, 12)
             segments.forEach { segment ->
                 val item = card(parent, COLOR_SURFACE)
-                addText(item, "\${formatTimestamp(segment.startMs)} – \${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
+                addText(item, "${formatTimestamp(segment.startMs)} – ${formatTimestamp(segment.endMs)}", 11f, COLOR_PRIMARY_DARK, true)
                 addSpace(item, 6)
                 addText(item, segment.text, 15f, COLOR_TEXT)
                 addSpace(item, 8)
