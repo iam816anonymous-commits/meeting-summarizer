@@ -14,7 +14,8 @@ An offline-first Android meeting assistant. The user explicitly starts and stops
 - [Phase 6 follow-up — punctuationless ASR regression fix](docs/PHASE_6_FOLLOWUP_AUDIT.md)
 - [Phase 7 audit — personal action items and progress UX](docs/PHASE_7_AUDIT.md)
 - [Phase 8 research — on-device LLM options and ASR-first recommendation](docs/PHASE_8_RESEARCH.md)
-- **Current implementation:** Phase 7 — personal profile, “My action items”, review/confirmation, and model-install/recording status UX. Phase 8 is research only; no LLM runtime is integrated.
+- [Phase 8 implementation — adaptive on-device LLM feasibility gate](docs/PHASE_8_AUDIT.md)
+- **Current implementation:** Phase 8 feasibility gate — checks device resources before any future LLM trial. No LLM runtime/model is downloaded or integrated yet; unsuitable devices remain on deterministic offline summaries.
 - **Implemented:** native Android recording, app-private segmented audio, local English ASR integration, timestamped transcript persistence, transcript correction/search and meeting deletion, evidence-linked deterministic offline findings, and a conservative profile-based personal-action ranking flow.
 - **Validation note:** CI does not replace physical-device tests for offline recognition, migration/persistence, search, deletion, attribution quality, download/install progress, and notification behavior.
 
