@@ -37,6 +37,20 @@ import com.iam816anonymous.meetingsummarizer.summary.PersonalActionCategory
 import com.iam816anonymous.meetingsummarizer.summary.DeviceRuntimeSnapshot
 import com.iam816anonymous.meetingsummarizer.summary.OnDeviceLlmCapability
 import com.iam816anonymous.meetingsummarizer.summary.LocalModelRegistry
+import com.iam816anonymous.meetingsummarizer.summary.LocalLlmModelCatalog
+import com.iam816anonymous.meetingsummarizer.summary.LocalLlmModel
+import com.iam816anonymous.meetingsummarizer.summary.VerifiedModelArtifact
+import com.iam816anonymous.meetingsummarizer.summary.VerifiedModelDownloader
+import com.iam816anonymous.meetingsummarizer.summary.ModelInstallResult
+import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Engine
+import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.SamplerConfig
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.collect
 import com.iam816anonymous.meetingsummarizer.summary.ModelDeviceSnapshot
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
@@ -77,6 +91,13 @@ class MainActivity : Activity() {
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
     private var whisperDownloadStage = "Ready"
+    private val llmDownloadBusy = mutableSetOf<String>()
+    private val llmDownloadPercent = mutableMapOf<String, Int>()
+    private val llmDownloadStage = mutableMapOf<String, String>()
+    private val llmTestBusy = mutableSetOf<String>()
+    private var llmStatusMessage: String? = null
+    private val llmDownloader by lazy { VerifiedModelDownloader() }
+    private fun llmModelDirectory(): File = File(filesDir, "llm-models")
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
     private var modelProgressBar: ProgressBar? = null
@@ -570,6 +591,40 @@ class MainActivity : Activity() {
             addText(whisperCard, "Currently selected", 12f, COLOR_PRIMARY_DARK, true)
             addButton(whisperCard, "Switch to default English model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "zipformer-en").putString("transcription_language", "en").apply(); transcriptionMessage = "Default English model selected."; render() }
         }
+        addSpace(parent, 18)
+        addText(parent, "On-device text models", 21f, COLOR_TEXT, true)
+        addSpace(parent, 5)
+        addText(parent, "Optional downloads for local summaries and structured meeting notes. Files are stored on this device and verified before they can be loaded.", 13f, COLOR_MUTED)
+        LocalLlmModelCatalog.models.forEach { model ->
+            addSpace(parent, 10)
+            val llmCard = card(parent, COLOR_SURFACE)
+            addText(llmCard, model.displayName, 16f, COLOR_TEXT, true)
+            addSpace(llmCard, 4)
+            addText(llmCard, model.description, 12f, COLOR_MUTED)
+            addSpace(llmCard, 5)
+            addText(llmCard, "Download: about 331 MiB · License: " + model.license, 12f, COLOR_MUTED)
+            val installed = model.isInstalled(llmModelDirectory())
+            addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
+            if (model.id in llmDownloadBusy) {
+                addSpace(llmCard, 8)
+                addText(llmCard, (llmDownloadStage[model.id] ?: "Downloading") + " · " + (llmDownloadPercent[model.id] ?: 0) + "%", 12f, COLOR_PRIMARY_DARK, true)
+                llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = llmDownloadPercent[model.id] ?: 0 }, matchWrapParams())
+            } else if (installed) {
+                addSpace(llmCard, 8)
+                addButton(llmCard, if (model.id in llmTestBusy) "Testing model…" else "Test local model", false) {
+                    if (model.id !in llmTestBusy) testLocalLlmModel(model)
+                }
+            } else {
+                addSpace(llmCard, 8)
+                addButton(llmCard, "Download model", false) { downloadLocalLlmModel(model) }
+            }
+        }
+        llmStatusMessage?.let {
+            addSpace(parent, 8)
+            addText(parent, it, 12f, if (it.contains("failed", true) || it.contains("not enough", true)) COLOR_WARNING else COLOR_PRIMARY_DARK)
+        }
+        addSpace(parent, 6)
+        addText(parent, "Compatibility note: RAM checks are estimates. These two files share Qwen3-0.6B base weights but use different response templates; they are not two different base models. The target phone must pass a real load and generation test before either is considered reliable.", 11f, COLOR_MUTED)
         if (modelDownloadBusy) {
             addSpace(parent, 12)
             val progressCard = card(parent, COLOR_SURFACE_ALT)
@@ -584,6 +639,124 @@ class MainActivity : Activity() {
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
     }
+    private fun downloadLocalLlmModel(model: LocalLlmModel) {
+        if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
+        val freeBytes = StatFs(filesDir.absolutePath).availableBytes
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
+        if (Build.VERSION.SDK_INT < model.minAndroidApi || memoryInfo.availMem < model.minAvailableRamBytes) {
+            llmStatusMessage = "Download not started: current device RAM/API does not meet the conservative screening threshold for " + model.displayName + ". English transcription is unaffected."
+            render()
+            return
+        }
+        val concurrentReservation = llmDownloadBusy.sumOf { activeId ->
+            (LocalLlmModelCatalog.models.firstOrNull { it.id == activeId }?.expectedBytes ?: 0L) +
+                VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
+        }
+        val requiredFreeBytes = concurrentReservation + model.expectedBytes + VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
+        if (freeBytes < maxOf(model.minFreeStorageBytes, requiredFreeBytes)) {
+            llmStatusMessage = "Not enough free storage for " + model.displayName +
+                " and the other active download(s). Required with working space: " + formatBytes(maxOf(model.minFreeStorageBytes, requiredFreeBytes)) + "."
+            render()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Download " + model.displayName + "?")
+            .setMessage("Download about 331 MiB over HTTPS, verify the exact file size and SHA-256, and store it locally. This model may still be too slow or memory-intensive on this phone.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Download") { _, _ -> startLlmModelDownload(model) }
+            .show()
+    }
+
+    private fun startLlmModelDownload(model: LocalLlmModel) {
+        if (!llmDownloadBusy.add(model.id)) return
+        llmDownloadPercent[model.id] = 0
+        llmDownloadStage[model.id] = "Connecting"
+        llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
+        render()
+        Thread {
+            val artifact = VerifiedModelArtifact(model.id, model.downloadUrl, model.fileName, model.expectedBytes, model.sha256)
+            val result = runBlocking {
+                llmDownloader.install(
+                    artifact = artifact,
+                    modelDirectory = llmModelDirectory(),
+                    freeStorageBytes = StatFs(filesDir.absolutePath).availableBytes,
+                    userOptedIn = true,
+                    onProgress = { written, total ->
+                        val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 100) else 0
+                        if (percent != llmDownloadPercent[model.id]) {
+                            runOnUiThread {
+                                llmDownloadPercent[model.id] = percent
+                                llmDownloadStage[model.id] = "Downloading and verifying"
+                                if (!isFinishing) render()
+                            }
+                        }
+                    }
+                )
+            }
+            runOnUiThread {
+                llmDownloadBusy.remove(model.id)
+                when (result) {
+                    is ModelInstallResult.Installed -> {
+                        llmDownloadPercent[model.id] = 100
+                        llmDownloadStage[model.id] = "Installed"
+                        llmStatusMessage = model.displayName + " downloaded and SHA-256 verified. Run Test local model before relying on it."
+                    }
+                    is ModelInstallResult.Rejected -> {
+                        llmDownloadStage[model.id] = "Failed"
+                        llmStatusMessage = model.displayName + " download failed: " + result.reason
+                    }
+                }
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
+    private fun testLocalLlmModel(model: LocalLlmModel) {
+        if (!llmTestBusy.add(model.id)) return
+        llmStatusMessage = "Loading " + model.displayName + " off the UI thread and running a short offline generation test…"
+        render()
+        Thread {
+            var engine: Engine? = null
+            var conversation: Conversation? = null
+            var initialized = false
+            var testError: String? = null
+            var output = ""
+            try {
+                val file = model.installedFile(llmModelDirectory())
+                require(model.verifyInstalled(llmModelDirectory())) { "Model file failed SHA-256 verification. Download it again." }
+                engine = Engine(EngineConfig(modelPath = file.absolutePath, backend = Backend.CPU(), cacheDir = cacheDir.absolutePath))
+                engine.initialize()
+                initialized = true
+                conversation = engine.createConversation(
+                    ConversationConfig(
+                        systemInstruction = Contents.of("You summarize meeting notes accurately. Do not invent facts."),
+                        samplerConfig = SamplerConfig(topK = 10, topP = 0.9, temperature = 0.2)
+                    )
+                )
+                runBlocking {
+                    checkNotNull(conversation).sendMessageAsync("Summarize this note in one sentence: The team will review the budget on Friday and Maya owns the revised spreadsheet.")
+                        .collect { message -> output += message.toString() }
+                }
+                if (output.isBlank()) throw IllegalStateException("The model loaded but returned an empty response.")
+            } catch (error: Exception) {
+                testError = error.message ?: error.javaClass.simpleName
+            } finally {
+                runCatching { conversation?.close() }
+                if (initialized) runCatching { engine?.close() }
+            }
+            runOnUiThread {
+                llmTestBusy.remove(model.id)
+                llmStatusMessage = if (testError == null) {
+                    "Local generation test passed for " + model.displayName + ": " + output.take(240)
+                } else {
+                    "Local model test failed: " + testError + ". The deterministic summary fallback remains available."
+                }
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
     private fun languageDisplayName(code: String): String = when (code) {
         "en" -> "English"
         "hi" -> "Hindi"
