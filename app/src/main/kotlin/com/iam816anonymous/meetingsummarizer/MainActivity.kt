@@ -614,7 +614,9 @@ class MainActivity : Activity() {
             addSpace(llmCard, 4)
             addText(llmCard, model.description, 12f, COLOR_MUTED)
             addSpace(llmCard, 5)
-            addText(llmCard, "Download: about 331 MiB · License: " + model.license, 12f, COLOR_MUTED)
+            addText(llmCard, model.tierLabel + " tier · Download " + model.estimatedDownloadSize + " · License: " + model.license, 12f, COLOR_MUTED)
+            val recommendedForDevice = recommendedLocalLlmModels(selectedLanguage()).any { it.id == model.id }
+            addText(llmCard, if (recommendedForDevice) "Recommended for this device and selected language" else "Not recommended for current resources/language", 11f, if (recommendedForDevice) COLOR_PRIMARY_DARK else COLOR_MUTED)
             val installed = model.isInstalled(llmModelDirectory())
             addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
@@ -651,12 +653,25 @@ class MainActivity : Activity() {
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
     }
+    private fun recommendedLocalLlmModels(languageCode: String): List<LocalLlmModel> {
+        val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo().also { manager.getMemoryInfo(it) }
+        val storage = StatFs(filesDir.absolutePath).availableBytes
+        return LocalLlmModelCatalog.recommendations(
+            languageCode = languageCode,
+            androidApi = Build.VERSION.SDK_INT,
+            totalRamBytes = memory.totalMem,
+            availableRamBytes = memory.availMem,
+            freeStorageBytes = storage
+        )
+    }
+
     private fun downloadLocalLlmModel(model: LocalLlmModel) {
         if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
         val freeBytes = StatFs(filesDir.absolutePath).availableBytes
         val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
-        if (Build.VERSION.SDK_INT < model.minAndroidApi || memoryInfo.availMem < model.minAvailableRamBytes) {
+        if (Build.VERSION.SDK_INT < model.minAndroidApi || memoryInfo.totalMem < model.minTotalRamBytes || memoryInfo.availMem < model.minAvailableRamBytes || !model.supportsLanguage(selectedLanguage())) {
             llmStatusMessage = "Download not started: current device RAM/API does not meet the conservative screening threshold for " + model.displayName + ". English transcription is unaffected."
             render()
             return
@@ -674,7 +689,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Download " + model.displayName + "?")
-            .setMessage("Download about 331 MiB over HTTPS, verify the exact file size and SHA-256, and store it locally. This model may still be too slow or memory-intensive on this phone.")
+            .setMessage("Download " + model.estimatedDownloadSize + " over HTTPS, enforce the catalog size bound, verify the pinned SHA-256, and store it locally. Model loading and quality still require a successful on-device test.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Download") { _, _ -> startLlmModelDownload(model) }
             .show()
@@ -687,7 +702,7 @@ class MainActivity : Activity() {
         llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
         render()
         Thread {
-            val artifact = VerifiedModelArtifact(model.id, model.downloadUrl, model.fileName, model.expectedBytes, model.sha256)
+            val artifact = VerifiedModelArtifact(model.id, model.downloadUrl, model.fileName, model.expectedBytes, model.sha256, model.sizeIsExact)
             val result = runBlocking {
                 llmDownloader.install(
                     artifact = artifact,
@@ -1117,7 +1132,7 @@ class MainActivity : Activity() {
                     }
                 }
                 addSpace(summaryCard, 12)
-                val installedLlm = LocalLlmModelCatalog.models.firstOrNull { it.isInstalled(llmModelDirectory()) }
+                val installedLlm = recommendedLocalLlmModels(selectedLanguage()).firstOrNull { it.isInstalled(llmModelDirectory()) }
                 when (val llmResult = llmSummaryResults[sessionId]) {
                     is MeetingLlmSummaryResult.Accepted -> {
                         val aiCard = card(summaryCard, COLOR_SURFACE)
