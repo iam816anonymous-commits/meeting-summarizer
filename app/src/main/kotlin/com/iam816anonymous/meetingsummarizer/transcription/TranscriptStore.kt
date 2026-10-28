@@ -153,7 +153,7 @@ class TranscriptStore(context: Context) :
     fun markChunkRunning(sessionId: String, audioPath: String) {
         writableDatabase.execSQL(
             "UPDATE transcription_jobs SET status = ?, last_error = NULL, attempts = attempts + 1, updated_at_ms = ? WHERE session_id = ? AND audio_path = ?",
-            arrayOf(JobStatus.RUNNING.name, System.currentTimeMillis(), sessionId, audioPath)
+            arrayOf<Any?>(JobStatus.RUNNING.name, System.currentTimeMillis(), sessionId, audioPath)
         )
     }
 

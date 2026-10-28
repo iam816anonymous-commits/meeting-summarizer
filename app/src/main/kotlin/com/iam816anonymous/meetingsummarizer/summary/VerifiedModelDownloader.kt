@@ -12,7 +12,8 @@ data class VerifiedModelArtifact(
     val downloadUrl: String,
     val fileName: String,
     val expectedBytes: Long,
-    val sha256: String
+    val sha256: String,
+    val sizeIsExact: Boolean = true
 )
 
 sealed interface ModelInstallResult {
@@ -23,7 +24,7 @@ sealed interface ModelInstallResult {
 /**
  * Explicit opt-in, HTTPS-only model installer. It follows a small number of HTTPS redirects
  * for Hugging Face's object storage, caps bytes, hashes while streaming, and only atomically
- * exposes a file after exact-size and SHA-256 validation.
+ * exposes a file after catalog size-bound and SHA-256 validation.
  */
 class VerifiedModelDownloader {
     suspend fun install(
@@ -50,7 +51,7 @@ class VerifiedModelDownloader {
             connection = openFollowingRedirects(artifact.downloadUrl)
             if (connection.responseCode !in 200..299) throw IllegalStateException("Model server returned HTTP ${connection.responseCode}.")
             val advertisedLength = connection.contentLengthLong
-            if (advertisedLength > 0L && advertisedLength != artifact.expectedBytes) throw IllegalStateException("Artifact size does not match the catalog.")
+            if (artifact.sizeIsExact && advertisedLength > 0L && advertisedLength != artifact.expectedBytes) throw IllegalStateException("Artifact size does not match the catalog.")
             val digest = MessageDigest.getInstance("SHA-256")
             var written = 0L
             connection.inputStream.use { input ->
@@ -60,14 +61,14 @@ class VerifiedModelDownloader {
                         val count = input.read(buffer)
                         if (count < 0) break
                         written += count
-                        if (written > artifact.expectedBytes || written > MAX_MODEL_BYTES) throw IllegalStateException("Model download exceeded the allowed size.")
+                        if (written > artifact.expectedBytes || written > MAX_MODEL_BYTES) throw IllegalStateException("Model download exceeded the catalog size bound.")
                         digest.update(buffer, 0, count)
                         output.write(buffer, 0, count)
                         onProgress(written, artifact.expectedBytes)
                     }
                 }
             }
-            if (written != artifact.expectedBytes) throw IllegalStateException("Model download was incomplete.")
+            if (written <= 0L || (artifact.sizeIsExact && written != artifact.expectedBytes)) throw IllegalStateException("Model download was incomplete or its exact size did not match the catalog.")
             val hash = digest.digest().joinToString("") { "%02x".format(it) }
             if (!hash.equals(artifact.sha256, true)) throw IllegalStateException("Model checksum verification failed.")
             if (destination.exists() && !destination.delete()) throw IllegalStateException("Could not replace the previous model.")
@@ -112,7 +113,7 @@ class VerifiedModelDownloader {
     }.getOrDefault(false)
 
     companion object {
-        const val MAX_MODEL_BYTES = 2500L * 1024 * 1024
+        const val MAX_MODEL_BYTES = 10L * 1024 * 1024 * 1024
         const val MIN_WORKING_SPACE_BYTES = 256L * 1024 * 1024
         const val CONNECT_TIMEOUT_MS = 15_000
         const val READ_TIMEOUT_MS = 30_000

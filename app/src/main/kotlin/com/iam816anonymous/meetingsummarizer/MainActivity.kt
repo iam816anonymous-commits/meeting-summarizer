@@ -28,6 +28,7 @@ import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
 import java.io.File
 import android.os.StatFs
+import android.os.SystemClock
 import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
 import com.iam816anonymous.meetingsummarizer.summary.CloudAiSettingsStore
@@ -101,6 +102,8 @@ class MainActivity : Activity() {
     private var englishTotalBytes = -1L
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
+    private var lastEnglishUiUpdateMs = 0L
+    private var lastWhisperUiUpdateMs = 0L
     private var whisperDownloadStage = "Ready"
     private val llmDownloadBusy = mutableSetOf<String>()
     private val llmDownloadPercent = mutableMapOf<String, Int>()
@@ -592,13 +595,7 @@ class MainActivity : Activity() {
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
         addText(englishCard, if (offlineModelManager.isInstalled()) "Installed · available offline" else "Not installed · download once to use offline", 12f, if (offlineModelManager.isInstalled()) COLOR_PRIMARY_DARK else COLOR_MUTED)
         if (!offlineModelManager.isInstalled() && !englishDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
-        if (englishDownloadBusy) {
-            addSpace(englishCard, 8)
-            addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "% · " + formatBytes(englishDownloadedBytes) + if (englishTotalBytes > 0L) " / " + formatBytes(englishTotalBytes) else " downloaded", 12f, COLOR_PRIMARY_DARK, true)
-            if (englishDownloadStage in listOf("Connecting to model host", "Installing model files", "Verifying model")) englishCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
-            englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent }, matchWrapParams())
-            addText(englishCard, "Keep the app open. Progress refreshes periodically.", 11f, COLOR_MUTED)
-        }
+        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent; isIndeterminate = englishDownloadStage.contains("connect", true) || englishDownloadStage.contains("verify", true) }, matchWrapParams()) }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
@@ -627,7 +624,9 @@ class MainActivity : Activity() {
             addSpace(llmCard, 4)
             addText(llmCard, model.description, 12f, COLOR_MUTED)
             addSpace(llmCard, 5)
-            addText(llmCard, "Download: about 331 MiB · License: " + model.license, 12f, COLOR_MUTED)
+            addText(llmCard, model.tierLabel + " tier · Download " + model.estimatedDownloadSize + " · License: " + model.license, 12f, COLOR_MUTED)
+            val recommendedForDevice = recommendedLocalLlmModels(selectedLanguage()).any { it.id == model.id }
+            addText(llmCard, if (recommendedForDevice) "Recommended for this device and selected language" else "Not recommended for current resources/language", 11f, if (recommendedForDevice) COLOR_PRIMARY_DARK else COLOR_MUTED)
             val installed = model.isInstalled(llmModelDirectory())
             addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
@@ -660,22 +659,30 @@ class MainActivity : Activity() {
             progressCard.addView(progress, matchWrapParams())
             addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
         }
-        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent }, matchWrapParams()) }
+        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent; isIndeterminate = whisperDownloadStage.contains("connect", true) || whisperDownloadStage.contains("verify", true) }, matchWrapParams()) }
         if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Downloads continue while you navigate. Wait for both installations to finish before transcribing.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
     }
+    private fun recommendedLocalLlmModels(languageCode: String): List<LocalLlmModel> {
+        val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo().also { manager.getMemoryInfo(it) }
+        val storage = StatFs(filesDir.absolutePath).availableBytes
+        return LocalLlmModelCatalog.recommendations(
+            languageCode = languageCode,
+            androidApi = Build.VERSION.SDK_INT,
+            totalRamBytes = memory.totalMem,
+            availableRamBytes = memory.availMem,
+            freeStorageBytes = storage
+        )
+    }
+
     private fun downloadLocalLlmModel(model: LocalLlmModel) {
         if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
         val freeBytes = StatFs(filesDir.absolutePath).availableBytes
-        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-        val memoryInfo = ActivityManager.MemoryInfo().also { activityManager.getMemoryInfo(it) }
-        if (Build.VERSION.SDK_INT < model.minAndroidApi || memoryInfo.availMem < model.minAvailableRamBytes) {
-            llmStatusMessage = "Download not started: current device RAM/API does not meet the conservative screening threshold for " + model.displayName + ". English transcription is unaffected."
-            render()
-            return
-        }
+        // Keep every catalog option downloadable; runtime suitability is handled by recommendations
+        // and the model-load smoke test, not by hiding or blocking the user's download choice.
         val concurrentReservation = llmDownloadBusy.sumOf { activeId ->
             (LocalLlmModelCatalog.models.firstOrNull { it.id == activeId }?.expectedBytes ?: 0L) +
                 VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
@@ -689,7 +696,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Download " + model.displayName + "?")
-            .setMessage("Download about 331 MiB over HTTPS, verify the exact file size and SHA-256, and store it locally. This model may still be too slow or memory-intensive on this phone.")
+            .setMessage("Download " + model.estimatedDownloadSize + " over HTTPS, enforce the catalog size bound, verify the pinned SHA-256, and store it locally. Model loading and quality still require a successful on-device test.")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Download") { _, _ -> startLlmModelDownload(model) }
             .show()
@@ -702,7 +709,7 @@ class MainActivity : Activity() {
         llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
         render()
         Thread {
-            val artifact = VerifiedModelArtifact(model.id, model.downloadUrl, model.fileName, model.expectedBytes, model.sha256)
+            val artifact = VerifiedModelArtifact(model.id, model.downloadUrl, model.fileName, model.expectedBytes, model.sha256, model.sizeIsExact)
             val result = runBlocking {
                 llmDownloader.install(
                     artifact = artifact,
@@ -869,12 +876,16 @@ class MainActivity : Activity() {
             try {
                 whisperModelManager.install(
                     onProgress = { progress ->
-                        runOnUiThread {
-                            modelDownloadPercent = progress.percent.coerceIn(0, 100)
-                            whisperDownloadPercent = modelDownloadPercent
-                            whisperDownloadStage = progress.fileName
-                            modelInstallStage = "Whisper · ${progress.fileName}"
-                            if (!isFinishing) render()
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastWhisperUiUpdateMs >= 1000L || progress.percent >= 100) {
+                            lastWhisperUiUpdateMs = now
+                            runOnUiThread {
+                                modelDownloadPercent = progress.percent.coerceIn(0, 100)
+                                whisperDownloadPercent = modelDownloadPercent
+                                whisperDownloadStage = progress.fileName
+                                modelInstallStage = "Whisper · ${progress.fileName}"
+                                if (!isFinishing) render()
+                            }
                         }
                     },
                     onStage = { stage ->
@@ -925,23 +936,17 @@ class MainActivity : Activity() {
             try {
                 offlineModelManager.install(
                     onProgress = { percent ->
-                        val bounded = percent.coerceIn(0, 100)
-                        if (bounded != englishDownloadPercent) runOnUiThread {
-                            if (bounded != englishDownloadPercent) {
-                                modelDownloadPercent = bounded
-                                englishDownloadPercent = bounded
-                                englishDownloadStage = "Downloading model"
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastEnglishUiUpdateMs >= 1000L || percent >= 100) {
+                            lastEnglishUiUpdateMs = now
+                            runOnUiThread {
+                                modelDownloadPercent = percent.coerceIn(0, 100)
+                                englishDownloadPercent = modelDownloadPercent
+                                englishDownloadStage = "Downloading"
                                 modelProgressLabel?.text = modelInstallProgressText()
-                                modelProgressBar?.progress = bounded
                                 if (!isFinishing) render()
+                                modelProgressBar?.progress = modelDownloadPercent
                             }
-                        }
-                    },
-                    onBytesProgress = { written, total ->
-                        runOnUiThread {
-                            englishDownloadedBytes = written
-                            englishTotalBytes = total
-                            if (!isFinishing && (written == 0L || written % (4L * 1024L * 1024L) < 64L * 1024L)) render()
                         }
                     },
                     onStage = { stage ->
@@ -1144,7 +1149,7 @@ class MainActivity : Activity() {
                     }
                 }
                 addSpace(summaryCard, 12)
-                val installedLlm = LocalLlmModelCatalog.models.firstOrNull { it.isInstalled(llmModelDirectory()) }
+                val installedLlm = recommendedLocalLlmModels(selectedLanguage()).firstOrNull { it.isInstalled(llmModelDirectory()) }
                 when (val llmResult = llmSummaryResults[sessionId]) {
                     is MeetingLlmSummaryResult.Accepted -> {
                         val aiCard = card(summaryCard, COLOR_SURFACE)
