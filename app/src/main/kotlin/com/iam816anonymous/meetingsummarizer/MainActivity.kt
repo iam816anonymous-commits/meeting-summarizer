@@ -595,7 +595,7 @@ class MainActivity : Activity() {
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
         addText(englishCard, if (offlineModelManager.isInstalled()) "Installed · available offline" else "Not installed · download once to use offline", 12f, if (offlineModelManager.isInstalled()) COLOR_PRIMARY_DARK else COLOR_MUTED)
         if (!offlineModelManager.isInstalled() && !englishDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
-        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + englishDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent; isIndeterminate = englishDownloadStage.contains("connect", true) || englishDownloadStage.contains("verify", true) }, matchWrapParams()) }
+        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size unknown"), 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent; isIndeterminate = englishDownloadStage.contains("connect", true) || englishDownloadStage.contains("verify", true) }, matchWrapParams()) }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
@@ -626,7 +626,17 @@ class MainActivity : Activity() {
             addSpace(llmCard, 5)
             addText(llmCard, model.tierLabel + " tier · Download " + model.estimatedDownloadSize + " · License: " + model.license, 12f, COLOR_MUTED)
             val recommendedForDevice = recommendedLocalLlmModels(selectedLanguage()).any { it.id == model.id }
-            addText(llmCard, if (recommendedForDevice) "Recommended for this device and selected language" else "Not recommended for current resources/language", 11f, if (recommendedForDevice) COLOR_PRIMARY_DARK else COLOR_MUTED)
+            val readiness = modelDownloadReadiness(model)
+            addText(llmCard, when {
+                installed -> "Installed · size verified"
+                readiness.first && recommendedForDevice -> "Eligible by resource screen · runtime still unverified"
+                readiness.first -> "Resource-eligible, but not recommended for selected language"
+                else -> "Download blocked for device safety"
+            }, 11f, if (readiness.first || installed) COLOR_PRIMARY_DARK else COLOR_WARNING)
+            if (!readiness.first && !installed) {
+                addSpace(llmCard, 4)
+                addText(llmCard, readiness.second, 12f, COLOR_WARNING)
+            }
             val installed = model.isInstalled(llmModelDirectory())
             addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
@@ -640,9 +650,12 @@ class MainActivity : Activity() {
                 addButton(llmCard, if (model.id in llmTestBusy) "Testing model…" else "Test local model", false) {
                     if (model.id !in llmTestBusy) testLocalLlmModel(model)
                 }
-            } else {
+            } else if (readiness.first) {
                 addSpace(llmCard, 8)
                 addButton(llmCard, "Download model", false) { downloadLocalLlmModel(model) }
+            } else {
+                addSpace(llmCard, 8)
+                addText(llmCard, "Download unavailable until this device meets the model's minimum resource requirements.", 12f, COLOR_MUTED)
             }
         }
         llmStatusMessage?.let {
@@ -665,6 +678,22 @@ class MainActivity : Activity() {
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
     }
+    /** Hard gate for downloads, separate from the softer recommendation label. */
+    private fun modelDownloadReadiness(model: LocalLlmModel): Pair<Boolean, String> {
+        val memory = ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+        val free = runCatching { StatFs(filesDir.absolutePath).availableBytes }.getOrDefault(0L)
+        val reasons = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT < model.minAndroidApi) reasons += "Requires Android API " + model.minAndroidApi + " or newer."
+        if (memory.totalMem < model.minTotalRamBytes) reasons += "Requires at least " + formatBytes(model.minTotalRamBytes) + " total RAM; device reports " + formatBytes(memory.totalMem) + "."
+        val neededRam = maxOf(model.minAvailableRamBytes, model.estimatedPeakRamBytes)
+        if (memory.availMem < neededRam) reasons += "Available RAM is " + formatBytes(memory.availMem) + "; estimated peak-memory screen requires " + formatBytes(neededRam) + ". Close other apps and check again."
+        val neededStorage = maxOf(model.minFreeStorageBytes, model.expectedBytes + VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES)
+        if (free < neededStorage) reasons += "Requires " + formatBytes(neededStorage) + " free storage; currently " + formatBytes(free) + " is free."
+        if (!model.supportsLanguage(selectedLanguage())) reasons += "This model is not catalogued for " + languageDisplayName(selectedLanguage()) + "."
+        return (reasons.isEmpty()) to reasons.joinToString(" ")
+    }
+
     private fun recommendedLocalLlmModels(languageCode: String): List<LocalLlmModel> {
         val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         val memory = ActivityManager.MemoryInfo().also { manager.getMemoryInfo(it) }
@@ -680,9 +709,13 @@ class MainActivity : Activity() {
 
     private fun downloadLocalLlmModel(model: LocalLlmModel) {
         if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
+        val readiness = modelDownloadReadiness(model)
+        if (!readiness.first) {
+            llmStatusMessage = "Download blocked for safety: " + readiness.second
+            render()
+            return
+        }
         val freeBytes = StatFs(filesDir.absolutePath).availableBytes
-        // Keep every catalog option downloadable; runtime suitability is handled by recommendations
-        // and the model-load smoke test, not by hiding or blocking the user's download choice.
         val concurrentReservation = llmDownloadBusy.sumOf { activeId ->
             (LocalLlmModelCatalog.models.firstOrNull { it.id == activeId }?.expectedBytes ?: 0L) +
                 VerifiedModelDownloader.MIN_WORKING_SPACE_BYTES
@@ -884,6 +917,19 @@ class MainActivity : Activity() {
                                 whisperDownloadPercent = modelDownloadPercent
                                 whisperDownloadStage = progress.fileName
                                 modelInstallStage = "Whisper · ${progress.fileName}"
+                                if (!isFinishing) render()
+                            }
+                        }
+                    },
+                    onBytesProgress = { written, total ->
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastEnglishUiUpdateMs >= 750L || (total > 0L && written >= total)) {
+                            lastEnglishUiUpdateMs = now
+                            runOnUiThread {
+                                englishDownloadedBytes = written
+                                englishTotalBytes = total
+                                if (total > 0L) englishDownloadPercent = ((written * 100L) / total).toInt().coerceIn(0, 99)
+                                modelDownloadPercent = englishDownloadPercent
                                 if (!isFinishing) render()
                             }
                         }
