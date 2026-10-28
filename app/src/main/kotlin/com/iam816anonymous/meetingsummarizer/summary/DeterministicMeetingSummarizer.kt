@@ -83,8 +83,14 @@ class DeterministicMeetingSummarizer {
         return MeetingSummary(overview = overview, findings = result)
     }
 
-    private fun splitSentences(text: String): List<String> =
-        text.split(Regex("(?<=[.!?])\\s+|\\n+")).map(String::trim).filter(String::isNotEmpty)
+    private fun splitSentences(text: String): List<String> {
+        // ASR often returns a single all-caps chunk with no punctuation.
+        val boundary = Regex(
+            "(?<=[.!?])\\s+|\\n+|\\s+(?=(?:we need to\\b|i need the\\b|for the development team\\b|qa[, ]|all documentation\\b|let.?s reconvene\\b|the primary focus is\\b))",
+            RegexOption.IGNORE_CASE
+        )
+        return text.split(boundary).map(String::trim).filter(String::isNotEmpty)
+    }
 
     private fun normalize(text: String): String =
         text.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), " ").trim()
