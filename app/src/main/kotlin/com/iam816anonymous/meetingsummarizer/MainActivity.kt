@@ -3,6 +3,7 @@ package com.iam816anonymous.meetingsummarizer
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -26,12 +27,15 @@ import android.widget.Toast
 import android.media.MediaPlayer
 import android.media.MediaMetadataRetriever
 import java.io.File
+import android.os.StatFs
 import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
 import com.iam816anonymous.meetingsummarizer.summary.SummaryFindingKind
 import com.iam816anonymous.meetingsummarizer.summary.PersonalProfile
 import com.iam816anonymous.meetingsummarizer.summary.PersonalActionItemClassifier
 import com.iam816anonymous.meetingsummarizer.summary.PersonalActionCategory
+import com.iam816anonymous.meetingsummarizer.summary.DeviceRuntimeSnapshot
+import com.iam816anonymous.meetingsummarizer.summary.OnDeviceLlmCapability
 import com.iam816anonymous.meetingsummarizer.transcription.OfflineModelManager
 import com.iam816anonymous.meetingsummarizer.transcription.SherpaOnnxEnglishSpeechEngine
 import com.iam816anonymous.meetingsummarizer.transcription.SpeechEngineResult
@@ -60,6 +64,7 @@ class MainActivity : Activity() {
     private var showTranscriptSessionId: String? = null
     private var transcriptSearchQuery: String = ""
     private var summaryVisibleSessionId: String? = null
+    private var llmAssessmentMessage: String? = null
     private var modelDownloadBusy = false
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
@@ -300,6 +305,14 @@ class MainActivity : Activity() {
         addButton(hero, "View recordings", false) { showRecordings = true; render() }
         addSpace(hero, 8)
         addButton(hero, if (loadPersonalProfile().preferredName.isBlank()) "Set up personal profile" else "Edit personal profile", false) { promptPersonalProfile() }
+        addSpace(hero, 10)
+        val llmCard = card(hero, COLOR_SURFACE_ALT)
+        addText(llmCard, "Optional on-device AI", 17f, COLOR_TEXT, true)
+        addSpace(llmCard, 5)
+        addText(llmCard, "Check this phone's RAM, free storage, Android version and CPU architecture before considering a local language model. If it is unsuitable, deterministic offline summaries remain available.", 13f, COLOR_MUTED)
+        addSpace(llmCard, 8)
+        addButton(llmCard, "Check this phone's AI capability", true) { assessOnDeviceLlm() }
+        llmAssessmentMessage?.let { addSpace(llmCard, 8); addText(llmCard, it, 13f, COLOR_TEXT) }
 
         addSpace(parent, 20)
         addText(parent, "WHAT YOU'LL GET", 12f, COLOR_MUTED, true)
@@ -803,6 +816,33 @@ class MainActivity : Activity() {
             showRecordings = true
             render()
         }
+    }
+
+    private fun assessOnDeviceLlm() {
+        val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(memory)
+        val storage = runCatching { StatFs(filesDir.absolutePath).availableBytes }.getOrDefault(0L)
+        val supportedAbi = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" || it == "armeabi-v7a" }
+        val snapshot = DeviceRuntimeSnapshot(Build.VERSION.SDK_INT, supportedAbi, memory.totalMem, memory.availMem, storage)
+        val assessment = OnDeviceLlmCapability().assess(snapshot)
+        val message = buildString {
+            append(if (assessment.mayAttemptTrial) "PRELIMINARY RESULT: candidate for a controlled model trial.\n" else "PRELIMINARY RESULT: do not attempt an on-device LLM on this device right now.\n")
+            append("Android API: ${snapshot.androidApi}\n")
+            append("RAM: ${formatBytes(snapshot.totalRamBytes)} total; ${formatBytes(snapshot.availableRamBytes)} currently available\n")
+            append("Free storage: ${formatBytes(snapshot.freeStorageBytes)}\n")
+            if (assessment.reasons.isNotEmpty()) {
+                append("\nReasons:\n")
+                assessment.reasons.forEach { append("• ").append(it).append("\n") }
+            }
+            append("\nThis is a conservative resource screen, not proof of model/runtime compatibility. No LLM has been downloaded or started. The deterministic offline summary remains available.")
+        }
+        llmAssessmentMessage = message
+        AlertDialog.Builder(this)
+            .setTitle(if (assessment.mayAttemptTrial) "Device may be suitable for a trial" else "Keep deterministic offline mode")
+            .setMessage(message)
+            .setPositiveButton("OK") { _, _ -> render() }
+            .show()
     }
 
     private fun loadPersonalProfile(): PersonalProfile = PersonalProfile(
