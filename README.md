@@ -43,3 +43,8 @@ The project pins Android Gradle Plugin, Kotlin and Gradle versions. GitHub Actio
 ## Privacy
 
 Audio, transcripts and deterministic findings are stored locally. The app must not upload meeting audio or transcript text as part of local model inference. Only record meetings when permitted by applicable law, workplace policy and participant consent requirements.
+
+
+## Optional cloud-enhanced summaries (Phase 9)
+
+Cloud summarization is off by default and separate from recording/transcription. Open **menu → Cloud AI privacy & settings**, configure an HTTPS OpenAI-compatible chat-completions endpoint, model and your own API key, then explicitly enable it. The key is encrypted at rest using Android Keystore; no shared key is bundled. For each meeting, the app previews the redacted transcript and requires confirmation. Only transcript text, segment IDs and timestamps are sent, never raw audio or profile preferences. Common email/phone patterns are redacted, but redaction is not a privacy guarantee. Provider terms and retention policies still apply. Network/provider failures do not replace or remove the deterministic offline summary.

@@ -30,6 +30,9 @@ import java.io.File
 import android.os.StatFs
 import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
+import com.iam816anonymous.meetingsummarizer.summary.CloudAiSettingsStore
+import com.iam816anonymous.meetingsummarizer.summary.CloudMeetingSummarizer
+import com.iam816anonymous.meetingsummarizer.summary.CloudTranscriptSegment
 import com.iam816anonymous.meetingsummarizer.summary.SummaryFindingKind
 import com.iam816anonymous.meetingsummarizer.summary.PersonalProfile
 import com.iam816anonymous.meetingsummarizer.summary.PersonalActionItemClassifier
@@ -83,6 +86,10 @@ class MainActivity : Activity() {
     private var showTranscriptSessionId: String? = null
     private var transcriptSearchQuery: String = ""
     private var summaryVisibleSessionId: String? = null
+    private var cloudSummaryBusy = false
+    private var cloudSummarySessionId: String? = null
+    private var cloudSummaryText: String? = null
+    private var cloudSummaryMessage: String? = null
     private var llmAssessmentMessage: String? = null
     private var modelDownloadBusy = false
     private var englishDownloadBusy = false
@@ -544,8 +551,8 @@ class MainActivity : Activity() {
     }
 
     private fun showAppMenu() {
-        AlertDialog.Builder(this).setItems(arrayOf("About this app", "Languages & models", "Saved recordings")) { dialog, which ->
-            when (which) { 0 -> showAboutApp(); 1 -> { showModelSettings = true; showRecordings = false; render() }; 2 -> { showRecordings = true; showModelSettings = false; render() } }
+        AlertDialog.Builder(this).setItems(arrayOf("About this app", "Languages & models", "Saved recordings", "Cloud AI privacy & settings")) { dialog, which ->
+            when (which) { 0 -> showAboutApp(); 1 -> { showModelSettings = true; showRecordings = false; render() }; 2 -> { showRecordings = true; showModelSettings = false; render() }; 3 -> startActivity(Intent(this, CloudAiSettingsActivity::class.java)) }
             dialog.dismiss()
         }.show()
     }
@@ -1108,6 +1115,19 @@ class MainActivity : Activity() {
                         addText(findingCard, "“${finding.evidence.quote}”", 12f, COLOR_MUTED)
                     }
                 }
+                addSpace(summaryCard, 12)
+                addText(summaryCard, "Optional cloud-enhanced summary", 17f, COLOR_TEXT, true)
+                addText(summaryCard, "Off by default. Review the exact redacted transcript payload and confirm before sending. Only transcript text is sent; raw audio stays local.", 12f, COLOR_MUTED)
+                if (cloudSummarySessionId == sessionId && !cloudSummaryText.isNullOrBlank()) {
+                    addSpace(summaryCard, 8)
+                    addText(summaryCard, "Cloud AI result · verify against transcript", 12f, COLOR_PRIMARY_DARK, true)
+                    addText(summaryCard, cloudSummaryText!!, 13f, COLOR_TEXT)
+                }
+                cloudSummaryMessage?.let { addText(summaryCard, it, 12f, if (it.contains("failed", true)) COLOR_WARNING else COLOR_MUTED) }
+                addSpace(summaryCard, 8)
+                addButton(summaryCard, if (cloudSummaryBusy) "Cloud summary running…" else "Review text and generate cloud summary", true) {
+                    if (!cloudSummaryBusy) requestCloudSummary(sessionId, segments)
+                }
                 addSpace(summaryCard, 8)
                 addButton(summaryCard, "Hide summary", false) { summaryVisibleSessionId = null; render() }
             } else {
@@ -1138,6 +1158,60 @@ class MainActivity : Activity() {
             showRecordings = true
             render()
         }
+    }
+
+
+    private fun requestCloudSummary(sessionId: String, segments: List<com.iam816anonymous.meetingsummarizer.transcription.TranscriptSegment>) {
+        val store = CloudAiSettingsStore(this)
+        if (!store.isEnabled() || !store.hasApiKey()) {
+            AlertDialog.Builder(this).setTitle("Cloud AI is not configured")
+                .setMessage("Cloud AI is disabled by default. Configure an HTTPS endpoint, model and your own API key in Cloud AI privacy & settings. Offline summaries remain available.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Open settings") { _, _ -> startActivity(Intent(this, CloudAiSettingsActivity::class.java)) }.show()
+            return
+        }
+        val payload = segments.filter { it.isFinal && it.text.isNotBlank() }
+            .sortedWith(compareBy<com.iam816anonymous.meetingsummarizer.transcription.TranscriptSegment> { it.startMs }.thenBy { it.sequence })
+            .map { segment ->
+                var text = segment.text
+                text = Regex("(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b").replace(text, "[REDACTED_EMAIL]")
+                text = Regex("(?<!\\w)(?:\\+?\\d[\\d .()\\-]{7,}\\d)(?!\\w)").replace(text, "[REDACTED_PHONE]")
+                CloudTranscriptSegment(segment.sequence, segment.startMs, segment.endMs, text)
+            }
+        val preview = payload.joinToString("\n") { "[segment #" + (it.sequence + 1) + " · " + formatTimestamp(it.startMs) + "] " + it.text }
+        if (preview.isBlank()) { Toast.makeText(this, "No final transcript text to send.", Toast.LENGTH_LONG).show(); return }
+        AlertDialog.Builder(this).setTitle("Confirm cloud processing for this meeting")
+            .setMessage("Provider: " + store.providerLabel() + "\nModel: " + store.model() +
+                "\n\nOnly the following redacted transcript text will be sent over HTTPS. Raw audio, profile settings and unrelated meetings are not sent. Text may still contain confidential information, and the provider may retain it under its own terms. Review before continuing.\n\n" +
+                preview.take(9000) + if (preview.length > 9000) "\n[Preview truncated]" else "")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Send text and summarize") { _, _ -> runCloudSummary(sessionId, payload) }.show()
+    }
+
+    private fun runCloudSummary(sessionId: String, segments: List<CloudTranscriptSegment>) {
+        if (cloudSummaryBusy) return
+        cloudSummaryBusy = true
+        cloudSummarySessionId = sessionId
+        cloudSummaryText = null
+        cloudSummaryMessage = "Sending reviewed transcript text to the configured provider…"
+        render()
+        Thread {
+            var result: String? = null
+            var failure: String? = null
+            try {
+                result = CloudMeetingSummarizer(CloudAiSettingsStore(this)).summarize(segments).toDisplayText()
+            } catch (e: Exception) {
+                failure = if (e is InterruptedException) "Cloud request cancelled; offline summary is unchanged."
+                    else "Cloud summary failed: " + (e.message ?: e.javaClass.simpleName) + ". Offline summary remains available."
+            }
+            runOnUiThread {
+                cloudSummaryBusy = false
+                cloudSummarySessionId = sessionId
+                cloudSummaryText = result
+                cloudSummaryMessage = failure ?: "Cloud summary completed. Verify all claims against transcript evidence."
+                if (!isFinishing) render()
+            }
+        }.start()
     }
 
     private fun assessOnDeviceLlm() {
