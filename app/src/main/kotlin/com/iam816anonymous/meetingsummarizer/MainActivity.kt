@@ -114,6 +114,8 @@ class MainActivity : Activity() {
     private val llmSummaryResults = mutableMapOf<String, MeetingLlmSummaryResult>()
     private val localMeetingSummaryService by lazy { LocalMeetingSummaryService() }
     private val llmDownloader by lazy { VerifiedModelDownloader() }
+    private val brainPreferences by lazy { getSharedPreferences("local_ai_brain", MODE_PRIVATE) }
+    private fun activeLocalModelId(): String? = brainPreferences.getString("active_model_id", null)
     private fun llmModelDirectory(): File = File(filesDir, "llm-models")
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
@@ -178,6 +180,9 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopPlayback()
+        // LiteRT-LM owns native memory. Release it away from the UI thread; the selected
+        // model ID remains persisted and will be reloaded after the next activation.
+        Thread { runCatching { localMeetingSummaryService.releaseRuntime() } }.start()
         super.onDestroy()
     }
 
@@ -668,7 +673,12 @@ class MainActivity : Activity() {
                 addSpace(llmCard, 4)
                 addText(llmCard, readiness.second, 12f, COLOR_WARNING)
             }
-            addText(llmCard, if (installed) "Installed · size verified" else "Not installed", 12f, if (installed) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
+            val isActiveBrain = activeLocalModelId() == model.id && installed
+            addText(llmCard, when {
+                isActiveBrain -> "Active AI brain · verified and activated"
+                installed -> "Installed · verified; activation required"
+                else -> "Not installed"
+            }, 12f, if (isActiveBrain) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
                 addSpace(llmCard, 8)
                 addText(llmCard, (llmDownloadStage[model.id] ?: "Connecting") + " · " + (llmDownloadPercent[model.id] ?: 0) + "%", 12f, COLOR_PRIMARY_DARK, true)
@@ -677,8 +687,12 @@ class MainActivity : Activity() {
                 addText(llmCard, "Downloading and verifying locally. The button is disabled until the result is known.", 11f, COLOR_MUTED)
             } else if (installed) {
                 addSpace(llmCard, 8)
-                addButton(llmCard, if (model.id in llmTestBusy) "Testing model…" else "Test local model", false) {
-                    if (model.id !in llmTestBusy) testLocalLlmModel(model)
+                addButton(llmCard, when {
+                    model.id in llmTestBusy -> "Loading and testing model…"
+                    isActiveBrain -> "Re-test active AI brain"
+                    else -> "Activate as AI brain"
+                }, false) {
+                    if (model.id !in llmTestBusy) activateLocalLlmModel(model)
                 }
             } else if (readiness.first) {
                 addSpace(llmCard, 8)
@@ -793,18 +807,57 @@ class MainActivity : Activity() {
                     }
                 )
             }
+            val activationResult = if (result is ModelInstallResult.Installed) {
+                localMeetingSummaryService.activate(model, llmModelDirectory())
+            } else null
             runOnUiThread {
                 llmDownloadBusy.remove(model.id)
                 when (result) {
                     is ModelInstallResult.Installed -> {
                         llmDownloadPercent[model.id] = 100
                         llmDownloadStage[model.id] = "Installed"
-                        llmStatusMessage = model.displayName + " downloaded and SHA-256 verified. Run Test local model before relying on it."
+                        if (activationResult?.success == true) {
+                            brainPreferences.edit().putString("active_model_id", model.id).apply()
+                            llmStatusMessage = model.displayName + " is now the active AI brain. " + activationResult.message +
+                                " First-load/inference time: " + activationResult.elapsedMs + " ms."
+                        } else {
+                            llmStatusMessage = model.displayName + " downloaded and verified, but was not activated: " +
+                                (activationResult?.message ?: "activation did not run") +
+                                " The existing active model and offline fallback remain unchanged."
+                        }
                     }
                     is ModelInstallResult.Rejected -> {
                         llmDownloadStage[model.id] = "Failed"
                         llmStatusMessage = model.displayName + " download failed: " + result.reason
                     }
+                }
+                if (!isFinishing) render()
+            }
+        }.start()
+    }
+
+    private fun activateLocalLlmModel(model: LocalLlmModel) {
+        if (model.id in llmTestBusy || llmDownloadBusy.isNotEmpty() || modelDownloadBusy ||
+            englishDownloadBusy || whisperDownloadBusy || transcriptionBusy || llmSummaryBusy.isNotEmpty()) return
+        if (!model.isInstalled(llmModelDirectory())) {
+            llmStatusMessage = "Model file is missing or incomplete. Download and verify it again."
+            render()
+            return
+        }
+        llmTestBusy.add(model.id)
+        llmStatusMessage = "Verifying and loading " + model.displayName + " into the local AI runtime…"
+        render()
+        Thread {
+            val result = localMeetingSummaryService.activate(model, llmModelDirectory())
+            runOnUiThread {
+                llmTestBusy.remove(model.id)
+                if (result.success) {
+                    brainPreferences.edit().putString("active_model_id", model.id).apply()
+                    llmStatusMessage = model.displayName + " is now the active AI brain. " + result.message +
+                        " Inference time: " + result.elapsedMs + " ms."
+                } else {
+                    llmStatusMessage = "Could not activate " + model.displayName + ": " + result.message +
+                        " The previously selected model remains selected."
                 }
                 if (!isFinishing) render()
             }
@@ -1228,7 +1281,10 @@ class MainActivity : Activity() {
                     }
                 }
                 addSpace(summaryCard, 12)
-                val installedLlm = recommendedLocalLlmModels(selectedLanguage()).firstOrNull { it.isInstalled(llmModelDirectory()) }
+                val activeBrainId = activeLocalModelId()
+                val installedLlm = LocalLlmModelCatalog.models.firstOrNull {
+                    it.id == activeBrainId && it.isInstalled(llmModelDirectory())
+                }
                 when (val llmResult = llmSummaryResults[sessionId]) {
                     is MeetingLlmSummaryResult.Accepted -> {
                         val aiCard = card(summaryCard, COLOR_SURFACE)
