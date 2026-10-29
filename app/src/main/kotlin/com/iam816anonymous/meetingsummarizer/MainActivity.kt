@@ -593,20 +593,50 @@ class MainActivity : Activity() {
         addSpace(parent, 12)
         val englishCard = card(parent, COLOR_SURFACE)
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
-        addText(englishCard, if (offlineModelManager.isInstalled()) "Installed · available offline" else "Not installed · download once to use offline", 12f, if (offlineModelManager.isInstalled()) COLOR_PRIMARY_DARK else COLOR_MUTED)
-        if (!offlineModelManager.isInstalled() && !englishDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
-        if (englishDownloadBusy) { addSpace(englishCard, 8); addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size unknown"), 12f, COLOR_PRIMARY_DARK, true); englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = englishDownloadPercent; isIndeterminate = englishDownloadStage.contains("connect", true) || englishDownloadStage.contains("verify", true) }, matchWrapParams()) }
+        val englishInstalled = offlineModelManager.isInstalled()
+        addText(englishCard, if (englishDownloadBusy) {
+            when {
+                englishDownloadStage.contains("connect", true) -> "Connecting to model host…"
+                englishDownloadStage.contains("download", true) -> "Downloading English model…"
+                englishDownloadStage.contains("install", true) -> "Installing English model files…"
+                englishDownloadStage.contains("verif", true) -> "Verifying English model files…"
+                else -> englishDownloadStage
+            }
+        } else if (englishInstalled) "Installed · available offline" else "Not installed · download once to use offline",
+            12f, if (englishInstalled && !englishDownloadBusy) COLOR_PRIMARY_DARK else COLOR_MUTED)
+        if (!englishInstalled && !englishDownloadBusy && !modelDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
+        if (englishDownloadBusy) {
+            addSpace(englishCard, 8)
+            addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"), 12f, COLOR_PRIMARY_DARK, true)
+            englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = englishDownloadPercent.coerceIn(0, 100)
+                isIndeterminate = englishTotalBytes <= 0L || !englishDownloadStage.contains("download", true)
+            }, matchWrapParams())
+        }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
-        addText(whisperCard, if (whisperReady) "Installed · about 99 MiB · works offline" else "Optional · about 99 MiB download · keep 250 MiB free for installation", 12f, if (whisperReady) COLOR_PRIMARY_DARK else COLOR_MUTED)
+        addText(whisperCard, when {
+            whisperDownloadBusy -> when {
+                whisperDownloadStage.startsWith("Downloading ") -> "Downloading model files…"
+                whisperDownloadStage.contains("verif", true) -> "Verifying model files…"
+                else -> whisperDownloadStage + "…"
+            }
+            whisperReady -> "Installed · about 99 MiB · works offline"
+            whisperDownloadStage == "Failed" -> "Installation failed · tap download to retry"
+            else -> "Optional · about 99 MiB download · keep 250 MiB free for installation"
+        }, 12f, if (whisperReady && !whisperDownloadBusy) COLOR_PRIMARY_DARK else COLOR_MUTED)
         addSpace(whisperCard, 8)
-        if (!whisperReady && !whisperDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
+        if (!whisperReady && !whisperDownloadBusy && !modelDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
         } else if (whisperDownloadBusy) {
             addSpace(whisperCard, 8)
-            addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true)
-            if (!whisperDownloadStage.startsWith("Downloading ")) whisperCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
-            whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent }, matchWrapParams())
+            addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "% overall", 12f, COLOR_PRIMARY_DARK, true)
+            whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = whisperDownloadPercent.coerceIn(0, 100)
+                isIndeterminate = !whisperDownloadStage.startsWith("Downloading ")
+            }, matchWrapParams())
         } else if (whisperReady && selectedEngine() != "whisper-multilingual") {
             addButton(whisperCard, "Use multilingual model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply(); transcriptionMessage = "Multilingual Whisper selected for " + languageDisplayName(selectedLanguage()) + "."; render() }
         } else if (whisperReady) {
@@ -672,8 +702,7 @@ class MainActivity : Activity() {
             progressCard.addView(progress, matchWrapParams())
             addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
         }
-        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent; isIndeterminate = whisperDownloadStage.contains("connect", true) || whisperDownloadStage.contains("verify", true) }, matchWrapParams()) }
-        if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Downloads continue while you navigate. Wait for both installations to finish before transcribing.", 12f, COLOR_MUTED) }
+        if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Model files are downloading or being verified. Progress remains visible; transcription starts only after installation and integrity checks finish.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
         addButton(parent, "Back to home", true) { showModelSettings = false; render() }
@@ -708,7 +737,8 @@ class MainActivity : Activity() {
     }
 
     private fun downloadLocalLlmModel(model: LocalLlmModel) {
-        if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
+        if (model.id in llmDownloadBusy || model.id in llmTestBusy || modelDownloadBusy ||
+            englishDownloadBusy || whisperDownloadBusy || llmDownloadBusy.isNotEmpty() || transcriptionBusy) return
         val readiness = modelDownloadReadiness(model)
         if (!readiness.first) {
             llmStatusMessage = "Download blocked for safety: " + readiness.second
@@ -736,6 +766,8 @@ class MainActivity : Activity() {
     }
 
     private fun startLlmModelDownload(model: LocalLlmModel) {
+        // Transcription and summary downloads share the screen-level progress state.
+        if (modelDownloadBusy || englishDownloadBusy || whisperDownloadBusy || transcriptionBusy || llmDownloadBusy.isNotEmpty()) return
         if (!llmDownloadBusy.add(model.id)) return
         llmDownloadPercent[model.id] = 0
         llmDownloadStage[model.id] = "Connecting"
@@ -898,7 +930,8 @@ class MainActivity : Activity() {
     }
 
     private fun installWhisperModel() {
-        if (whisperDownloadBusy || transcriptionBusy) return
+        // These installers share progress/status state; serialize downloads to prevent cross-talk.
+        if (modelDownloadBusy || englishDownloadBusy || whisperDownloadBusy || transcriptionBusy || llmDownloadBusy.isNotEmpty()) return
         whisperDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
@@ -956,7 +989,8 @@ class MainActivity : Activity() {
     }
 
     private fun installOfflineModel() {
-        if (englishDownloadBusy || transcriptionBusy) return
+        // These installers share progress/status state; serialize downloads to prevent cross-talk.
+        if (modelDownloadBusy || englishDownloadBusy || whisperDownloadBusy || transcriptionBusy || llmDownloadBusy.isNotEmpty()) return
         englishDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0

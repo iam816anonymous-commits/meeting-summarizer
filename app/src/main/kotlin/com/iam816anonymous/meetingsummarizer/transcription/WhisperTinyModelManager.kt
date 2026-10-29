@@ -46,16 +46,24 @@ class WhisperTinyModelManager(context: Context) {
         staging.deleteRecursively()
         if (!staging.mkdirs()) throw IllegalStateException("Could not create a temporary model directory.")
         try {
-            ARTIFACTS.forEach { artifact ->
+            ARTIFACTS.forEachIndexed { index, artifact ->
                 onStage("Downloading ${artifact.localName}")
                 val target = File(staging, artifact.localName)
-                downloadAndVerify(artifact, target) { percent -> onProgress(Progress(artifact.localName, percent)) }
+                downloadAndVerify(artifact, target) { filePercent ->
+                    // Report pack-wide progress rather than restarting the bar at each file.
+                    val overallPercent = ((index * 100L + filePercent.coerceIn(0, 99)) / ARTIFACTS.size)
+                        .toInt().coerceIn(0, 99)
+                    onProgress(Progress(artifact.localName, overallPercent))
+                }
             }
             onStage("Verifying Whisper model")
+            // Each file's exact size and SHA-256 were already verified while streaming it to disk.
+            // Re-hashing the entire pack here doubled disk I/O and made installation look stalled
+            // for minutes on low-end phones. Do a fast pack completeness check before activation.
             ARTIFACTS.forEach { artifact ->
                 val file = File(staging, artifact.localName)
-                if (!file.isFile || file.length() != artifact.bytes || !sha256(file).equals(artifact.sha256, true)) {
-                    throw IllegalStateException("Integrity check failed for ${artifact.localName}.")
+                if (!file.isFile || file.length() != artifact.bytes) {
+                    throw IllegalStateException("Verified model file is missing or incomplete: ${artifact.localName}.")
                 }
             }
             val backup = File(root.parentFile, "$MODEL_DIRECTORY.previous")
@@ -77,65 +85,28 @@ class WhisperTinyModelManager(context: Context) {
 
     private fun downloadAndVerify(artifact: Artifact, destination: File, onProgress: (Int) -> Unit) {
         val partial = File(destination.parentFile, destination.name + ".part")
-        var connection: HttpURLConnection? = null
         try {
-            var url = URL(artifact.url)
-            var redirects = 0
-            while (true) {
-                connection = (url.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 20_000
-                    readTimeout = 45_000
-                    instanceFollowRedirects = false
-                    requestMethod = "GET"
-                    setRequestProperty("User-Agent", "MeetingSummarizer-Android")
+            com.iam816anonymous.meetingsummarizer.summary.ReliableModelDownload.download(
+                initialUrl = artifact.url,
+                partialFile = partial,
+                expectedBytes = artifact.bytes,
+                maxBytes = artifact.bytes,
+                allowedExactHosts = setOf("huggingface.co", "hf.co"),
+                allowedHostSuffixes = setOf(".huggingface.co", ".hf.co", ".xethub.hf.co"),
+                onProgress = { progress ->
+                    onProgress(((progress.writtenBytes * 100L) / artifact.bytes).toInt().coerceIn(0, 99))
                 }
-                connection!!.connect()
-                val code = connection!!.responseCode
-                if (code in 200..299) break
-                if (code in listOf(301, 302, 303, 307, 308)) {
-                    val location = connection!!.getHeaderField("Location")
-                        ?: throw IllegalStateException("Model host returned a redirect without a destination.")
-                    connection!!.disconnect()
-                    connection = null
-                    if (redirects++ >= MAX_REDIRECTS) throw IllegalStateException("Too many model download redirects.")
-                    val next = URL(url, location)
-                    if (next.protocol != "https" || !isAllowedHost(next.host)) {
-                        throw IllegalStateException("Model host redirected to an untrusted location.")
-                    }
-                    url = next
-                    continue
-                }
-                throw IllegalStateException("Model host returned HTTP $code.")
-            }
-            val active = connection ?: throw IllegalStateException("Model download connection was not established.")
-            val advertised = active.contentLengthLong
-            if (advertised > 0L && advertised != artifact.bytes) throw IllegalStateException("Published file size differs from the pinned model manifest.")
-            val digest = MessageDigest.getInstance("SHA-256")
-            var total = 0L
-            active.inputStream.use { input ->
-                partial.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        total += count
-                        if (total > artifact.bytes) throw IllegalStateException("Model file exceeded its expected size.")
-                        digest.update(buffer, 0, count)
-                        output.write(buffer, 0, count)
-                        onProgress(((total * 100L) / artifact.bytes).toInt().coerceIn(0, 99))
-                    }
-                }
-            }
-            val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
-            if (total != artifact.bytes || !actualHash.equals(artifact.sha256, true)) {
-                throw IllegalStateException("SHA-256 or size verification failed for ${artifact.localName}.")
+            )
+            val actualHash = sha256(partial)
+            if (partial.length() != artifact.bytes || !actualHash.equals(artifact.sha256, true)) {
+                partial.delete()
+                throw IllegalStateException("SHA-256 or size verification failed for ${artifact.localName}. The incomplete file was discarded.")
             }
             if (!partial.renameTo(destination)) throw IllegalStateException("Could not finalize ${artifact.localName}.")
         } catch (error: Exception) {
-            partial.delete()
+            // Preserve a partial file only when all transport retries were exhausted.
+            if (error.message?.startsWith("Model download failed after") != true) partial.delete()
             throw error
-        } finally {
-            connection?.disconnect()
         }
     }
 
