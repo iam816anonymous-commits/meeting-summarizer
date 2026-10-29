@@ -761,14 +761,6 @@ class MainActivity : Activity() {
         }
         addSpace(parent, 6)
         addText(parent, "Compatibility note: RAM checks are estimates. These two files share Qwen3-0.6B base weights but use different response templates; they are not two different base models. The target phone must pass a real load and generation test before either is considered reliable.", 11f, COLOR_MUTED)
-        if (modelDownloadBusy) {
-            addSpace(parent, 12)
-            val progressCard = card(parent, COLOR_SURFACE_ALT)
-            addText(progressCard, modelInstallProgressText(), 13f, COLOR_PRIMARY_DARK, true)
-            val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = modelDownloadPercent }
-            progressCard.addView(progress, matchWrapParams())
-            addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
-        }
         if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Model files are downloading or being verified. Progress remains visible; transcription starts only after installation and integrity checks finish.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
@@ -860,7 +852,18 @@ class MainActivity : Activity() {
                                 llmDownloadTotalBytes[model.id] = total
                                 llmDownloadPercent[model.id] = percent
                                 llmDownloadStage[model.id] = "Downloading"
-                                if (!isFinishing) render()
+                                val progressText = if (total > 0L) {
+                                    "Downloading · " + formatBytes(written) + " / " + formatBytes(total) + " · " + percent + "%"
+                                } else if (written > 0L) {
+                                    "Downloading · " + formatBytes(written) + " downloaded · waiting for server size"
+                                } else {
+                                    "Connecting to model host…"
+                                }
+                                if (!isFinishing && activeLlmProgressModelId == model.id) {
+                                    llmProgressLabel?.text = progressText
+                                    llmProgressBar?.isIndeterminate = total <= 0L
+                                    if (total > 0L) llmProgressBar?.progress = percent
+                                }
                             }
                         }
                     }
@@ -1061,7 +1064,11 @@ class MainActivity : Activity() {
                                 whisperDownloadPercent = modelDownloadPercent
                                 whisperDownloadStage = progress.fileName
                                 modelInstallStage = "Whisper · " + progress.fileName
-                                if (!isFinishing) render()
+                                if (!isFinishing) {
+                                    whisperProgressLabel?.text = progress.fileName + " · " + whisperDownloadPercent + "% overall"
+                                    whisperProgressBar?.isIndeterminate = false
+                                    whisperProgressBar?.progress = whisperDownloadPercent
+                                }
                             }
                         }
                     },
@@ -1069,7 +1076,15 @@ class MainActivity : Activity() {
                         runOnUiThread {
                             modelInstallStage = stage
                             whisperDownloadStage = stage
-                            if (!isFinishing) render()
+                            if (!isFinishing) {
+                                whisperStatusLabel?.text = when {
+                                    stage.contains("verif", true) -> "Verifying model files…"
+                                    stage == "Installed" -> "Installed · about 99 MiB · works offline"
+                                    else -> stage + "…"
+                                }
+                                whisperProgressLabel?.text = stage + " · " + whisperDownloadPercent + "% overall"
+                                whisperProgressBar?.isIndeterminate = true
+                            }
                         }
                     }
                 )
@@ -1127,7 +1142,14 @@ class MainActivity : Activity() {
                                     ((written * 100L) / total).toInt().coerceIn(0, 99)
                                 } else 0
                                 modelDownloadPercent = englishDownloadPercent
-                                if (!isFinishing) render()
+                                if (!isFinishing) {
+                                    englishProgressLabel?.text = englishDownloadStage + " · " + (
+                                        if (total > 0L) formatBytes(written) + " / " + formatBytes(total) + " · " + englishDownloadPercent + "%"
+                                        else formatBytes(written) + " downloaded · total size not reported"
+                                    )
+                                    englishProgressBar?.isIndeterminate = total <= 0L
+                                    if (total > 0L) englishProgressBar?.progress = englishDownloadPercent
+                                }
                             }
                         }
                     },
@@ -1135,8 +1157,21 @@ class MainActivity : Activity() {
                         runOnUiThread {
                             modelInstallStage = stage
                             englishDownloadStage = stage
-                            modelProgressLabel?.text = modelInstallProgressText()
-                            if (!isFinishing) render()
+                            if (!isFinishing) {
+                                englishStatusLabel?.text = when {
+                                    stage.contains("connect", true) -> "Connecting to model host…"
+                                    stage.contains("download", true) -> "Downloading English model…"
+                                    stage.contains("install", true) -> "Installing English model files…"
+                                    stage.contains("verif", true) -> "Verifying English model files…"
+                                    stage == "Installed" -> "Installed · available offline"
+                                    else -> stage
+                                }
+                                englishProgressLabel?.text = stage + " · " + (
+                                    if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%"
+                                    else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"
+                                )
+                                englishProgressBar?.isIndeterminate = !stage.contains("download", true) || englishTotalBytes <= 0L
+                            }
                         }
                     }
                 )
@@ -1147,8 +1182,6 @@ class MainActivity : Activity() {
                     englishDownloadPercent = 100
                     englishDownloadStage = "Installed"
                     modelInstallStage = "Installed"
-                    modelProgressBar = null
-                    modelProgressLabel = null
                     transcriptionMessage = "English model installed. You can now transcribe with Airplane mode enabled."
                     if (!isFinishing) render()
                 }
@@ -1157,8 +1190,6 @@ class MainActivity : Activity() {
                     englishDownloadBusy = false
                     modelDownloadBusy = whisperDownloadBusy
                     englishDownloadStage = "Failed"
-                    modelProgressBar = null
-                    modelProgressLabel = null
                     modelInstallStage = "Installation failed"
                     transcriptionMessage = "Model installation failed: " + (error.message ?: error.javaClass.simpleName)
                     if (!isFinishing) render()
