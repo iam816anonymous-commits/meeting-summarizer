@@ -135,8 +135,6 @@ class MainActivity : Activity() {
     private fun llmModelDirectory(): File = File(filesDir, "llm-models")
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
-    private var modelProgressBar: ProgressBar? = null
-    private var modelProgressLabel: TextView? = null
     private val profilePreferences by lazy { getSharedPreferences("personal_profile", MODE_PRIVATE) }
     private var transcriptionBusy = false
     private var transcriptionMessage: String? = null
@@ -1225,15 +1223,6 @@ class MainActivity : Activity() {
                 }
             }
         }.start()
-    }
-
-    private fun modelInstallProgressText(): String = when (modelInstallStage) {
-        "Downloading model" -> "Downloading English model — $modelDownloadPercent%"
-        "Installing model files" -> "Installing English model files…"
-        "Verifying model" -> "Verifying model files…"
-        "Installed" -> "English model installed."
-        "Installation failed" -> "Model installation failed."
-        else -> "$modelInstallStage…"
     }
 
     private fun transcribeSession(session: File, audioFiles: List<File>) {
