@@ -46,10 +46,15 @@ class WhisperTinyModelManager(context: Context) {
         staging.deleteRecursively()
         if (!staging.mkdirs()) throw IllegalStateException("Could not create a temporary model directory.")
         try {
-            ARTIFACTS.forEach { artifact ->
+            ARTIFACTS.forEachIndexed { index, artifact ->
                 onStage("Downloading ${artifact.localName}")
                 val target = File(staging, artifact.localName)
-                downloadAndVerify(artifact, target) { percent -> onProgress(Progress(artifact.localName, percent)) }
+                downloadAndVerify(artifact, target) { filePercent ->
+                    // Report pack-wide progress rather than restarting the bar at each file.
+                    val overallPercent = ((index * 100L + filePercent.coerceIn(0, 99)) / ARTIFACTS.size)
+                        .toInt().coerceIn(0, 99)
+                    onProgress(Progress(artifact.localName, overallPercent))
+                }
             }
             onStage("Verifying Whisper model")
             ARTIFACTS.forEach { artifact ->
