@@ -11,7 +11,9 @@ import java.security.MessageDigest
  */
 object LocalLlmModelCatalog {
     private const val QWEN06_REVISION = "6aa2daf"
-    // The upstream LiquidAI source revision is not a revision in litert-community/LFM2-700M.\n    // Resolve the published LiteRT artifact from its repository and enforce the catalog SHA-256 below.\n    private const val LFM2_REVISION = "main"
+    // The upstream LiquidAI source revision is not a revision in litert-community/LFM2-700M.
+    // Resolve the published LiteRT artifact from its repository and enforce the catalog SHA-256 below.
+    private const val LFM2_REVISION = "main"
     private const val QWEN17_INT4_REVISION = "d9b8a91"
     private const val QWEN17_INT8_REVISION = "4b46d76"
     private const val MB = 1024L * 1024L
