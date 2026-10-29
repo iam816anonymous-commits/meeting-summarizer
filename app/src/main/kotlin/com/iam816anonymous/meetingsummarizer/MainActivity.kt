@@ -848,9 +848,6 @@ class MainActivity : Activity() {
                     }
                 )
             }
-            val activationResult                    }
-                )
-            }
             val activationResult = if (result is ModelInstallResult.Installed) {
                 localMeetingSummaryService.activate(model, llmModelDirectory())
             } else null
@@ -1050,7 +1047,6 @@ class MainActivity : Activity() {
                             }
                         }
                     },
-                    onStage = { stage ->                    },
                     onStage = { stage ->
                         runOnUiThread {
                             modelInstallStage = stage
@@ -1117,7 +1113,7 @@ class MainActivity : Activity() {
                             }
                         }
                     },
-                    onStage = { stage ->                    onStage = { stage ->
+                    onStage = { stage ->
                         runOnUiThread {
                             modelInstallStage = stage
                             englishDownloadStage = stage
