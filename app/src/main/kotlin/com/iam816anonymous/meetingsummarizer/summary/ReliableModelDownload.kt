@@ -123,7 +123,9 @@ internal object ReliableModelDownload {
                         }
                     }
                 }
-                if (written <= 0L || (expectedBytes > 0L && written != expectedBytes)) {
+                if (written <= 0L ||
+                    (expectedBytes > 0L && written != expectedBytes) ||
+                    (total > 0L && written != total)) {
                     throw RetryableDownloadException("Download ended before all expected bytes arrived.")
                 }
                 return
