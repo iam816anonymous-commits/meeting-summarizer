@@ -25,6 +25,23 @@ class LocalLlmModelCatalogTest {
         }
     }
 
+    @Test fun everyDownloadUrlPointsToItsNamedArtifact() {
+        LocalLlmModelCatalog.models.forEach { model ->
+            assertTrue("URL must end with the exact artifact name for ${model.id}", model.downloadUrl.endsWith("/" + model.fileName))
+            val revision = model.downloadUrl.substringAfter("/resolve/").substringBefore("/")
+            assertTrue("URL must include a non-empty revision or ref for ${model.id}", revision.isNotBlank())
+        }
+    }
+
+    @Test fun lfm2UrlsUseTheLiteRtRepositoryRefNotTheUpstreamSourceRevision() {
+        val lfm2 = LocalLlmModelCatalog.models.filter { it.id.startsWith("lfm2-700m-") }
+        assertEquals(2, lfm2.size)
+        lfm2.forEach { model ->
+            assertTrue(model.downloadUrl.startsWith("https://huggingface.co/litert-community/LFM2-700M/resolve/main/"))
+            assertTrue(model.downloadUrl.endsWith("/" + model.fileName))
+        }
+    }
+
     @Test fun modelVariantsHaveUniqueIdsFilesAndHashes() {
         val models = LocalLlmModelCatalog.models
         assertEquals(models.size, models.map { it.id }.toSet().size)
