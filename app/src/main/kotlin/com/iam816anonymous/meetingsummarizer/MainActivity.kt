@@ -29,6 +29,7 @@ import android.media.MediaMetadataRetriever
 import java.io.File
 import android.os.StatFs
 import android.os.SystemClock
+import java.util.concurrent.atomic.AtomicLong
 import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
 import com.iam816anonymous.meetingsummarizer.summary.CloudAiSettingsStore
@@ -102,14 +103,14 @@ class MainActivity : Activity() {
     private var englishTotalBytes = -1L
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
-    private var lastEnglishUiUpdateMs = 0L
-    private var lastWhisperUiUpdateMs = 0L
+    private val englishProgressUiThrottle = AtomicLong(0L)
+    private val whisperProgressUiThrottle = AtomicLong(0L)
     private var whisperDownloadStage = "Ready"
     private val llmDownloadBusy = mutableSetOf<String>()
     private val llmDownloadPercent = mutableMapOf<String, Int>()
     private val llmDownloadWrittenBytes = mutableMapOf<String, Long>()
     private val llmDownloadTotalBytes = mutableMapOf<String, Long>()
-    private val llmDownloadLastUiUpdateMs = mutableMapOf<String, Long>()
+    private val llmDownloadLastUiUpdateMs = mutableMapOf<String, AtomicLong>()
     private val llmDownloadStage = mutableMapOf<String, String>()
     private val llmTestBusy = mutableSetOf<String>()
     private var llmStatusMessage: String? = null
@@ -240,6 +241,20 @@ class MainActivity : Activity() {
 
     private fun stopRecordingService() {
         startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_STOP))
+    }
+
+    /**
+     * Throttle progress callbacks on the worker thread before posting to the main queue.
+     * Updating the timestamp only inside runOnUiThread lets fast downloads enqueue hundreds
+     * of stale renders, which can make the entire Activity appear frozen on low-end devices.
+     */
+    private fun shouldPublishProgress(lastPublishedAt: AtomicLong, intervalMs: Long = 1000L): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        while (true) {
+            val previous = lastPublishedAt.get()
+            if (now - previous < intervalMs) return false
+            if (lastPublishedAt.compareAndSet(previous, now)) return true
+        }
     }
 
     private fun render() {
@@ -806,7 +821,7 @@ class MainActivity : Activity() {
         llmDownloadPercent[model.id] = 0
         llmDownloadWrittenBytes[model.id] = 0L
         llmDownloadTotalBytes[model.id] = -1L
-        llmDownloadLastUiUpdateMs[model.id] = 0L
+        llmDownloadLastUiUpdateMs[model.id] = AtomicLong(0L)
         llmDownloadStage[model.id] = "Connecting"
         llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
         render()
@@ -820,20 +835,20 @@ class MainActivity : Activity() {
                     userOptedIn = true,
                     onProgress = { written, total ->
                         val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 99) else 0
-                        val now = SystemClock.elapsedRealtime()
-                        val changedPercent = percent != llmDownloadPercent[model.id]
-                        val shouldRefresh = changedPercent || now - (llmDownloadLastUiUpdateMs[model.id] ?: 0L) >= 500L
-                        if (shouldRefresh) {
+                        val throttle = llmDownloadLastUiUpdateMs[model.id]
+                        if (throttle != null && shouldPublishProgress(throttle)) {
                             runOnUiThread {
                                 llmDownloadWrittenBytes[model.id] = written
                                 llmDownloadTotalBytes[model.id] = total
                                 llmDownloadPercent[model.id] = percent
-                                llmDownloadLastUiUpdateMs[model.id] = SystemClock.elapsedRealtime()
                                 llmDownloadStage[model.id] = "Downloading"
                                 if (!isFinishing) render()
                             }
                         }
                     }
+                )
+            }
+            val activationResult                    }
                 )
             }
             val activationResult = if (result is ModelInstallResult.Installed) {
@@ -1017,6 +1032,7 @@ class MainActivity : Activity() {
         whisperDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        whisperProgressUiThrottle.set(0L)
         modelInstallStage = "Preparing multilingual Whisper download"
         transcriptionMessage = "Downloading verified multilingual Whisper model. English remains available."
         render()
@@ -1024,18 +1040,17 @@ class MainActivity : Activity() {
             try {
                 whisperModelManager.install(
                     onProgress = { progress ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastWhisperUiUpdateMs >= 1000L || progress.percent >= 100) {
-                            lastWhisperUiUpdateMs = now
+                        if (progress.percent >= 100 || shouldPublishProgress(whisperProgressUiThrottle)) {
                             runOnUiThread {
                                 modelDownloadPercent = progress.percent.coerceIn(0, 100)
                                 whisperDownloadPercent = modelDownloadPercent
                                 whisperDownloadStage = progress.fileName
-                                modelInstallStage = "Whisper · ${progress.fileName}"
+                                modelInstallStage = "Whisper · " + progress.fileName
                                 if (!isFinishing) render()
                             }
                         }
                     },
+                    onStage = { stage ->                    },
                     onStage = { stage ->
                         runOnUiThread {
                             modelInstallStage = stage
@@ -1076,6 +1091,7 @@ class MainActivity : Activity() {
         englishDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        englishProgressUiThrottle.set(0L)
         englishDownloadedBytes = 0L
         englishTotalBytes = -1L
         modelInstallStage = "Connecting to model host"
@@ -1084,32 +1100,24 @@ class MainActivity : Activity() {
         Thread {
             try {
                 offlineModelManager.install(
-                    onProgress = { percent ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastEnglishUiUpdateMs >= 1000L || percent >= 100) {
-                            lastEnglishUiUpdateMs = now
-                            runOnUiThread {
-                                modelDownloadPercent = percent.coerceIn(0, 100)
-                                englishDownloadPercent = modelDownloadPercent
-                                englishDownloadStage = "Downloading"
-                                modelProgressLabel?.text = modelInstallProgressText()
-                                if (!isFinishing) render()
-                                modelProgressBar?.progress = modelDownloadPercent
-                            }
-                        }
-                    },
+                    // Byte progress is the single source of UI updates. The manager calls both
+                    // callbacks for every chunk; rendering from both creates a backlog of stale
+                    // full-screen rebuilds on slower phones.
+                    onProgress = { _ -> },
                     onBytesProgress = { written, total ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastEnglishUiUpdateMs >= 1000L || (total > 0L && written >= total)) {
-                            lastEnglishUiUpdateMs = now
+                        if (shouldPublishProgress(englishProgressUiThrottle)) {
                             runOnUiThread {
                                 englishDownloadedBytes = written
                                 englishTotalBytes = total
+                                englishDownloadPercent = if (total > 0L) {
+                                    ((written * 100L) / total).toInt().coerceIn(0, 99)
+                                } else 0
+                                modelDownloadPercent = englishDownloadPercent
                                 if (!isFinishing) render()
                             }
                         }
                     },
-                    onStage = { stage ->
+                    onStage = { stage ->                    onStage = { stage ->
                         runOnUiThread {
                             modelInstallStage = stage
                             englishDownloadStage = stage
