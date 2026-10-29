@@ -111,6 +111,15 @@ class MainActivity : Activity() {
     private val llmDownloadWrittenBytes = mutableMapOf<String, Long>()
     private val llmDownloadTotalBytes = mutableMapOf<String, Long>()
     private val llmDownloadLastUiUpdateMs = mutableMapOf<String, AtomicLong>()
+    private var englishStatusLabel: TextView? = null
+    private var englishProgressLabel: TextView? = null
+    private var englishProgressBar: ProgressBar? = null
+    private var whisperStatusLabel: TextView? = null
+    private var whisperProgressLabel: TextView? = null
+    private var whisperProgressBar: ProgressBar? = null
+    private var activeLlmProgressModelId: String? = null
+    private var llmProgressLabel: TextView? = null
+    private var llmProgressBar: ProgressBar? = null
     private val llmDownloadStage = mutableMapOf<String, String>()
     private val llmTestBusy = mutableSetOf<String>()
     private var llmStatusMessage: String? = null
@@ -258,6 +267,15 @@ class MainActivity : Activity() {
     }
 
     private fun render() {
+        englishStatusLabel = null
+        englishProgressLabel = null
+        englishProgressBar = null
+        whisperStatusLabel = null
+        whisperProgressLabel = null
+        whisperProgressBar = null
+        activeLlmProgressModelId = null
+        llmProgressLabel = null
+        llmProgressBar = null
         val scroll = ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
             isFillViewport = true
@@ -617,7 +635,7 @@ class MainActivity : Activity() {
         val englishCard = card(parent, COLOR_SURFACE)
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
         val englishInstalled = offlineModelManager.isInstalled()
-        addText(englishCard, if (englishDownloadBusy) {
+        englishStatusLabel = addText(englishCard, if (englishDownloadBusy) {
             when {
                 englishDownloadStage.contains("connect", true) -> "Connecting to model host…"
                 englishDownloadStage.contains("download", true) -> "Downloading English model…"
@@ -630,17 +648,18 @@ class MainActivity : Activity() {
         if (!englishInstalled && !englishDownloadBusy && !modelDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
         if (englishDownloadBusy) {
             addSpace(englishCard, 8)
-            addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"), 12f, COLOR_PRIMARY_DARK, true)
-            englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            englishProgressLabel = addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"), 12f, COLOR_PRIMARY_DARK, true)
+            englishProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
                 progress = englishDownloadPercent.coerceIn(0, 100)
                 isIndeterminate = englishTotalBytes <= 0L || !englishDownloadStage.contains("download", true)
-            }, matchWrapParams())
+            }
+            englishCard.addView(englishProgressBar, matchWrapParams())
         }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
-        addText(whisperCard, when {
+        whisperStatusLabel = addText(whisperCard, when {
             whisperDownloadBusy -> when {
                 whisperDownloadStage.startsWith("Downloading ") -> "Downloading model files…"
                 whisperDownloadStage.contains("verif", true) -> "Verifying model files…"
@@ -654,12 +673,13 @@ class MainActivity : Activity() {
         if (!whisperReady && !whisperDownloadBusy && !modelDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
         } else if (whisperDownloadBusy) {
             addSpace(whisperCard, 8)
-            addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "% overall", 12f, COLOR_PRIMARY_DARK, true)
-            whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            whisperProgressLabel = addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "% overall", 12f, COLOR_PRIMARY_DARK, true)
+            whisperProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
                 progress = whisperDownloadPercent.coerceIn(0, 100)
                 isIndeterminate = !whisperDownloadStage.startsWith("Downloading ")
-            }, matchWrapParams())
+            }
+            whisperCard.addView(whisperProgressBar, matchWrapParams())
         } else if (whisperReady && selectedEngine() != "whisper-multilingual") {
             addButton(whisperCard, "Use multilingual model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply(); transcriptionMessage = "Multilingual Whisper selected for " + languageDisplayName(selectedLanguage()) + "."; render() }
         } else if (whisperReady) {
@@ -709,16 +729,14 @@ class MainActivity : Activity() {
                 } else {
                     "$stage · establishing a secure connection"
                 }
-                addText(llmCard, progressText, 12f, COLOR_PRIMARY_DARK, true)
-                llmCard.addView(ProgressBar(this).apply {
+                activeLlmProgressModelId = model.id
+                llmProgressLabel = addText(llmCard, progressText, 12f, COLOR_PRIMARY_DARK, true)
+                llmProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = llmDownloadPercent[model.id] ?: 0
                     isIndeterminate = total <= 0L
-                }, matchWrapParams())
-                if (total > 0L) {
-                    llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                        max = 100
-                        progress = llmDownloadPercent[model.id] ?: 0
-                    }, matchWrapParams())
                 }
+                llmCard.addView(llmProgressBar, matchWrapParams())
                 addText(llmCard, "Downloading and verifying locally. The button is disabled until the result is known.", 11f, COLOR_MUTED)
             } else if (installed) {
                 addSpace(llmCard, 8)
