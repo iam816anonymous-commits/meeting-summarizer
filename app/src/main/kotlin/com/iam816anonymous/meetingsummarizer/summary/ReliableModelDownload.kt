@@ -29,6 +29,8 @@ internal object ReliableModelDownload {
         for (attempt in 0 until MAX_ATTEMPTS) {
             attemptsMade = attempt + 1
             try {
+                // A connection may fail just after writing the final byte; let the caller verify it.
+                if (expectedBytes > 0L && partialFile.isFile && partialFile.length() == expectedBytes) return partialFile
                 downloadAttempt(initialUrl, partialFile, expectedBytes, maxBytes, allowedExactHosts, allowedHostSuffixes, onProgress)
                 val length = partialFile.length()
                 if (length <= 0L || (expectedBytes > 0L && length != expectedBytes)) {
