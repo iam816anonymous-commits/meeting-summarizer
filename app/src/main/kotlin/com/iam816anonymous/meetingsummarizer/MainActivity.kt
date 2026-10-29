@@ -702,7 +702,6 @@ class MainActivity : Activity() {
             progressCard.addView(progress, matchWrapParams())
             addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
         }
-        if (whisperDownloadBusy) { addSpace(whisperCard, 8); addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "%", 12f, COLOR_PRIMARY_DARK, true); whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = whisperDownloadPercent; isIndeterminate = whisperDownloadStage.contains("connect", true) || whisperDownloadStage.contains("verify", true) }, matchWrapParams()) }
         if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Model files are downloading or being verified. Progress remains visible; transcription starts only after installation and integrity checks finish.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
@@ -738,7 +737,8 @@ class MainActivity : Activity() {
     }
 
     private fun downloadLocalLlmModel(model: LocalLlmModel) {
-        if (model.id in llmDownloadBusy || model.id in llmTestBusy || transcriptionBusy) return
+        if (model.id in llmDownloadBusy || model.id in llmTestBusy || modelDownloadBusy ||
+            englishDownloadBusy || whisperDownloadBusy || llmDownloadBusy.isNotEmpty() || transcriptionBusy) return
         val readiness = modelDownloadReadiness(model)
         if (!readiness.first) {
             llmStatusMessage = "Download blocked for safety: " + readiness.second
