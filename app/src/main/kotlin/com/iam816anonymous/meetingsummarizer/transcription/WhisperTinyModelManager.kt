@@ -57,10 +57,13 @@ class WhisperTinyModelManager(context: Context) {
                 }
             }
             onStage("Verifying Whisper model")
+            // Each file's exact size and SHA-256 were already verified while streaming it to disk.
+            // Re-hashing the entire pack here doubled disk I/O and made installation look stalled
+            // for minutes on low-end phones. Do a fast pack completeness check before activation.
             ARTIFACTS.forEach { artifact ->
                 val file = File(staging, artifact.localName)
-                if (!file.isFile || file.length() != artifact.bytes || !sha256(file).equals(artifact.sha256, true)) {
-                    throw IllegalStateException("Integrity check failed for ${artifact.localName}.")
+                if (!file.isFile || file.length() != artifact.bytes) {
+                    throw IllegalStateException("Verified model file is missing or incomplete: ${artifact.localName}.")
                 }
             }
             val backup = File(root.parentFile, "$MODEL_DIRECTORY.previous")
