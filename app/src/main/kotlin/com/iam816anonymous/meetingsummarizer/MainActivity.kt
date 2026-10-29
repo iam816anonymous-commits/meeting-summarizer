@@ -114,12 +114,15 @@ class MainActivity : Activity() {
     private var englishStatusLabel: TextView? = null
     private var englishProgressLabel: TextView? = null
     private var englishProgressBar: ProgressBar? = null
+    private var englishActivitySpinner: ProgressBar? = null
     private var whisperStatusLabel: TextView? = null
     private var whisperProgressLabel: TextView? = null
     private var whisperProgressBar: ProgressBar? = null
+    private var whisperActivitySpinner: ProgressBar? = null
     private var activeLlmProgressModelId: String? = null
     private var llmProgressLabel: TextView? = null
     private var llmProgressBar: ProgressBar? = null
+    private var llmActivitySpinner: ProgressBar? = null
     private val llmDownloadStage = mutableMapOf<String, String>()
     private val llmTestBusy = mutableSetOf<String>()
     private var llmStatusMessage: String? = null
@@ -270,12 +273,15 @@ class MainActivity : Activity() {
         englishStatusLabel = null
         englishProgressLabel = null
         englishProgressBar = null
+        englishActivitySpinner = null
         whisperStatusLabel = null
         whisperProgressLabel = null
         whisperProgressBar = null
+        whisperActivitySpinner = null
         activeLlmProgressModelId = null
         llmProgressLabel = null
         llmProgressBar = null
+        llmActivitySpinner = null
         val scroll = ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
             isFillViewport = true
@@ -649,6 +655,8 @@ class MainActivity : Activity() {
         if (englishDownloadBusy) {
             addSpace(englishCard, 8)
             englishProgressLabel = addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"), 12f, COLOR_PRIMARY_DARK, true)
+            englishActivitySpinner = ProgressBar(this).apply { isIndeterminate = true }
+            englishCard.addView(englishActivitySpinner, matchWrapParams())
             englishProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
                 progress = englishDownloadPercent.coerceIn(0, 100)
@@ -674,6 +682,8 @@ class MainActivity : Activity() {
         } else if (whisperDownloadBusy) {
             addSpace(whisperCard, 8)
             whisperProgressLabel = addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "% overall", 12f, COLOR_PRIMARY_DARK, true)
+            whisperActivitySpinner = ProgressBar(this).apply { isIndeterminate = true }
+            whisperCard.addView(whisperActivitySpinner, matchWrapParams())
             whisperProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
                 progress = whisperDownloadPercent.coerceIn(0, 100)
@@ -731,6 +741,8 @@ class MainActivity : Activity() {
                 }
                 activeLlmProgressModelId = model.id
                 llmProgressLabel = addText(llmCard, progressText, 12f, COLOR_PRIMARY_DARK, true)
+                llmActivitySpinner = ProgressBar(this).apply { isIndeterminate = true }
+                llmCard.addView(llmActivitySpinner, matchWrapParams())
                 llmProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                     max = 100
                     progress = llmDownloadPercent[model.id] ?: 0
