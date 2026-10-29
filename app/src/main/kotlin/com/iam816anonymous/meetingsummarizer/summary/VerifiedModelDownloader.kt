@@ -31,7 +31,8 @@ class VerifiedModelDownloader {
         modelDirectory: File,
         freeStorageBytes: Long,
         userOptedIn: Boolean,
-        onProgress: (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+        onProgress: (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+        onStage: (stage: String) -> Unit = {}
     ): ModelInstallResult = withContext(Dispatchers.IO) {
         if (!userOptedIn) return@withContext ModelInstallResult.Rejected("Model download requires explicit opt-in.")
         if (!isAllowedUrl(artifact.downloadUrl)) return@withContext ModelInstallResult.Rejected("Only approved HTTPS model hosts are allowed.")
@@ -47,6 +48,7 @@ class VerifiedModelDownloader {
         val backup = File(modelDirectory, artifact.fileName + ".previous")
         try {
             if (!modelDirectory.exists() && !modelDirectory.mkdirs()) throw IOException("Could not create model directory.")
+            onStage("Connecting to model host")
             ReliableModelDownload.download(
                 initialUrl = artifact.downloadUrl,
                 partialFile = partial,
@@ -56,11 +58,13 @@ class VerifiedModelDownloader {
                 allowedHostSuffixes = setOf(".huggingface.co", ".hf.co", ".xethub.hf.co"),
                 onProgress = { progress -> onProgress(progress.writtenBytes, progress.totalBytes) }
             )
+            onStage("Verifying model size")
             if (partial.length() <= 0L || partial.length() > artifact.expectedBytes ||
                 (artifact.sizeIsExact && partial.length() != artifact.expectedBytes)) {
                 partial.delete()
                 throw IOException("Model size verification failed. The partial download was discarded.")
             }
+            onStage("Verifying SHA-256 checksum")
             val digest = MessageDigest.getInstance("SHA-256")
             partial.inputStream().buffered().use { input ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -76,6 +80,7 @@ class VerifiedModelDownloader {
                 throw IOException("Model checksum verification failed. The partial download was discarded; please retry.")
             }
 
+            onStage("Installing verified model")
             backup.delete()
             if (destination.exists() && !destination.renameTo(backup)) {
                 throw IOException("Could not safely preserve the previously installed model.")
@@ -85,8 +90,10 @@ class VerifiedModelDownloader {
                 throw IOException("Could not finalize installed model.")
             }
             backup.delete()
+            onStage("Installed")
             ModelInstallResult.Installed(destination)
         } catch (error: Exception) {
+            onStage("Failed")
             // Preserve only a resumable partial after transient transport retries are exhausted.
             if (error.message?.startsWith("Model download failed after") != true) partial.delete()
             ModelInstallResult.Rejected(error.message ?: "Model download failed.")

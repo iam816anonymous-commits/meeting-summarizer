@@ -29,6 +29,7 @@ import android.media.MediaMetadataRetriever
 import java.io.File
 import android.os.StatFs
 import android.os.SystemClock
+import java.util.concurrent.atomic.AtomicLong
 import java.util.Properties
 import com.iam816anonymous.meetingsummarizer.summary.DeterministicMeetingSummarizer
 import com.iam816anonymous.meetingsummarizer.summary.CloudAiSettingsStore
@@ -102,14 +103,26 @@ class MainActivity : Activity() {
     private var englishTotalBytes = -1L
     private var whisperDownloadPercent = 0
     private var englishDownloadStage = "Ready"
-    private var lastEnglishUiUpdateMs = 0L
-    private var lastWhisperUiUpdateMs = 0L
+    private val englishProgressUiThrottle = AtomicLong(0L)
+    private val whisperProgressUiThrottle = AtomicLong(0L)
     private var whisperDownloadStage = "Ready"
     private val llmDownloadBusy = mutableSetOf<String>()
     private val llmDownloadPercent = mutableMapOf<String, Int>()
     private val llmDownloadWrittenBytes = mutableMapOf<String, Long>()
     private val llmDownloadTotalBytes = mutableMapOf<String, Long>()
-    private val llmDownloadLastUiUpdateMs = mutableMapOf<String, Long>()
+    private val llmDownloadLastUiUpdateMs = mutableMapOf<String, AtomicLong>()
+    private var englishStatusLabel: TextView? = null
+    private var englishProgressLabel: TextView? = null
+    private var englishProgressBar: ProgressBar? = null
+    private var englishActivitySpinner: ProgressBar? = null
+    private var whisperStatusLabel: TextView? = null
+    private var whisperProgressLabel: TextView? = null
+    private var whisperProgressBar: ProgressBar? = null
+    private var whisperActivitySpinner: ProgressBar? = null
+    private var activeLlmProgressModelId: String? = null
+    private var llmProgressLabel: TextView? = null
+    private var llmProgressBar: ProgressBar? = null
+    private var llmActivitySpinner: ProgressBar? = null
     private val llmDownloadStage = mutableMapOf<String, String>()
     private val llmTestBusy = mutableSetOf<String>()
     private var llmStatusMessage: String? = null
@@ -122,8 +135,6 @@ class MainActivity : Activity() {
     private fun llmModelDirectory(): File = File(filesDir, "llm-models")
     private var modelDownloadPercent = 0
     private var modelInstallStage = "Preparing download"
-    private var modelProgressBar: ProgressBar? = null
-    private var modelProgressLabel: TextView? = null
     private val profilePreferences by lazy { getSharedPreferences("personal_profile", MODE_PRIVATE) }
     private var transcriptionBusy = false
     private var transcriptionMessage: String? = null
@@ -242,7 +253,33 @@ class MainActivity : Activity() {
         startService(Intent(this, RecordingService::class.java).setAction(RecordingService.ACTION_STOP))
     }
 
+    /**
+     * Throttle progress callbacks on the worker thread before posting to the main queue.
+     * Updating the timestamp only inside runOnUiThread lets fast downloads enqueue hundreds
+     * of stale renders, which can make the entire Activity appear frozen on low-end devices.
+     */
+    private fun shouldPublishProgress(lastPublishedAt: AtomicLong, intervalMs: Long = 1000L): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        while (true) {
+            val previous = lastPublishedAt.get()
+            if (now - previous < intervalMs) return false
+            if (lastPublishedAt.compareAndSet(previous, now)) return true
+        }
+    }
+
     private fun render() {
+        englishStatusLabel = null
+        englishProgressLabel = null
+        englishProgressBar = null
+        englishActivitySpinner = null
+        whisperStatusLabel = null
+        whisperProgressLabel = null
+        whisperProgressBar = null
+        whisperActivitySpinner = null
+        activeLlmProgressModelId = null
+        llmProgressLabel = null
+        llmProgressBar = null
+        llmActivitySpinner = null
         val scroll = ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
             isFillViewport = true
@@ -602,7 +639,7 @@ class MainActivity : Activity() {
         val englishCard = card(parent, COLOR_SURFACE)
         addText(englishCard, "English transcription", 16f, COLOR_TEXT, true)
         val englishInstalled = offlineModelManager.isInstalled()
-        addText(englishCard, if (englishDownloadBusy) {
+        englishStatusLabel = addText(englishCard, if (englishDownloadBusy) {
             when {
                 englishDownloadStage.contains("connect", true) -> "Connecting to model host…"
                 englishDownloadStage.contains("download", true) -> "Downloading English model…"
@@ -615,17 +652,20 @@ class MainActivity : Activity() {
         if (!englishInstalled && !englishDownloadBusy && !modelDownloadBusy) { addSpace(englishCard, 8); addButton(englishCard, "Download English model", false) { installOfflineModel() } }
         if (englishDownloadBusy) {
             addSpace(englishCard, 8)
-            addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"), 12f, COLOR_PRIMARY_DARK, true)
-            englishCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            englishProgressLabel = addText(englishCard, englishDownloadStage + " · " + (if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%" else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"), 12f, COLOR_PRIMARY_DARK, true)
+            englishActivitySpinner = ProgressBar(this).apply { isIndeterminate = true }
+            englishCard.addView(englishActivitySpinner, matchWrapParams())
+            englishProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
                 progress = englishDownloadPercent.coerceIn(0, 100)
                 isIndeterminate = englishTotalBytes <= 0L || !englishDownloadStage.contains("download", true)
-            }, matchWrapParams())
+            }
+            englishCard.addView(englishProgressBar, matchWrapParams())
         }
         addSpace(parent, 12)
         val whisperCard = card(parent, COLOR_SURFACE)
         addText(whisperCard, "Multilingual Whisper Tiny", 16f, COLOR_TEXT, true)
-        addText(whisperCard, when {
+        whisperStatusLabel = addText(whisperCard, when {
             whisperDownloadBusy -> when {
                 whisperDownloadStage.startsWith("Downloading ") -> "Downloading model files…"
                 whisperDownloadStage.contains("verif", true) -> "Verifying model files…"
@@ -639,12 +679,15 @@ class MainActivity : Activity() {
         if (!whisperReady && !whisperDownloadBusy && !modelDownloadBusy) { addButton(whisperCard, "Download multilingual model", false) { installWhisperModel() }
         } else if (whisperDownloadBusy) {
             addSpace(whisperCard, 8)
-            addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "% overall", 12f, COLOR_PRIMARY_DARK, true)
-            whisperCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            whisperProgressLabel = addText(whisperCard, whisperDownloadStage + " · " + whisperDownloadPercent + "% overall", 12f, COLOR_PRIMARY_DARK, true)
+            whisperActivitySpinner = ProgressBar(this).apply { isIndeterminate = true }
+            whisperCard.addView(whisperActivitySpinner, matchWrapParams())
+            whisperProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 100
                 progress = whisperDownloadPercent.coerceIn(0, 100)
                 isIndeterminate = !whisperDownloadStage.startsWith("Downloading ")
-            }, matchWrapParams())
+            }
+            whisperCard.addView(whisperProgressBar, matchWrapParams())
         } else if (whisperReady && selectedEngine() != "whisper-multilingual") {
             addButton(whisperCard, "Use multilingual model", false) { modelSelectionPreferences.edit().putString("transcription_engine", "whisper-multilingual").apply(); transcriptionMessage = "Multilingual Whisper selected for " + languageDisplayName(selectedLanguage()) + "."; render() }
         } else if (whisperReady) {
@@ -694,16 +737,16 @@ class MainActivity : Activity() {
                 } else {
                     "$stage · establishing a secure connection"
                 }
-                addText(llmCard, progressText, 12f, COLOR_PRIMARY_DARK, true)
-                llmCard.addView(ProgressBar(this).apply {
+                activeLlmProgressModelId = model.id
+                llmProgressLabel = addText(llmCard, progressText, 12f, COLOR_PRIMARY_DARK, true)
+                llmActivitySpinner = ProgressBar(this).apply { isIndeterminate = true }
+                llmCard.addView(llmActivitySpinner, matchWrapParams())
+                llmProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 100
+                    progress = llmDownloadPercent[model.id] ?: 0
                     isIndeterminate = total <= 0L
-                }, matchWrapParams())
-                if (total > 0L) {
-                    llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                        max = 100
-                        progress = llmDownloadPercent[model.id] ?: 0
-                    }, matchWrapParams())
                 }
+                llmCard.addView(llmProgressBar, matchWrapParams())
                 addText(llmCard, "Downloading and verifying locally. The button is disabled until the result is known.", 11f, COLOR_MUTED)
             } else if (installed) {
                 addSpace(llmCard, 8)
@@ -728,14 +771,6 @@ class MainActivity : Activity() {
         }
         addSpace(parent, 6)
         addText(parent, "Compatibility note: RAM checks are estimates. These two files share Qwen3-0.6B base weights but use different response templates; they are not two different base models. The target phone must pass a real load and generation test before either is considered reliable.", 11f, COLOR_MUTED)
-        if (modelDownloadBusy) {
-            addSpace(parent, 12)
-            val progressCard = card(parent, COLOR_SURFACE_ALT)
-            addText(progressCard, modelInstallProgressText(), 13f, COLOR_PRIMARY_DARK, true)
-            val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = modelDownloadPercent }
-            progressCard.addView(progress, matchWrapParams())
-            addText(progressCard, "Keep the app open until installation finishes.", 12f, COLOR_MUTED)
-        }
         if (englishDownloadBusy || whisperDownloadBusy) { addSpace(parent, 12); addText(parent, "Model files are downloading or being verified. Progress remains visible; transcription starts only after installation and integrity checks finish.", 12f, COLOR_MUTED) }
         if (transcriptionMessage != null) { addSpace(parent, 8); addText(parent, transcriptionMessage!!, 12f, if (transcriptionMessage!!.contains("failed", true)) COLOR_WARNING else COLOR_PRIMARY_DARK) }
         addSpace(parent, 20)
@@ -806,7 +841,7 @@ class MainActivity : Activity() {
         llmDownloadPercent[model.id] = 0
         llmDownloadWrittenBytes[model.id] = 0L
         llmDownloadTotalBytes[model.id] = -1L
-        llmDownloadLastUiUpdateMs[model.id] = 0L
+        llmDownloadLastUiUpdateMs[model.id] = AtomicLong(0L)
         llmDownloadStage[model.id] = "Connecting"
         llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
         render()
@@ -820,17 +855,42 @@ class MainActivity : Activity() {
                     userOptedIn = true,
                     onProgress = { written, total ->
                         val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 99) else 0
-                        val now = SystemClock.elapsedRealtime()
-                        val changedPercent = percent != llmDownloadPercent[model.id]
-                        val shouldRefresh = changedPercent || now - (llmDownloadLastUiUpdateMs[model.id] ?: 0L) >= 500L
-                        if (shouldRefresh) {
+                        val throttle = llmDownloadLastUiUpdateMs[model.id]
+                        if (throttle != null && shouldPublishProgress(throttle)) {
                             runOnUiThread {
                                 llmDownloadWrittenBytes[model.id] = written
                                 llmDownloadTotalBytes[model.id] = total
                                 llmDownloadPercent[model.id] = percent
-                                llmDownloadLastUiUpdateMs[model.id] = SystemClock.elapsedRealtime()
                                 llmDownloadStage[model.id] = "Downloading"
-                                if (!isFinishing) render()
+                                val progressText = if (total > 0L) {
+                                    "Downloading · " + formatBytes(written) + " / " + formatBytes(total) + " · " + percent + "%"
+                                } else if (written > 0L) {
+                                    "Downloading · " + formatBytes(written) + " downloaded · waiting for server size"
+                                } else {
+                                    "Connecting to model host…"
+                                }
+                                if (!isFinishing && activeLlmProgressModelId == model.id) {
+                                    llmProgressLabel?.text = progressText
+                                    llmProgressBar?.isIndeterminate = total <= 0L
+                                    if (total > 0L) llmProgressBar?.progress = percent
+                                }
+                            }
+                        }
+                    },
+                    onStage = { stage ->
+                        runOnUiThread {
+                            llmDownloadStage[model.id] = stage
+                            if (!isFinishing && activeLlmProgressModelId == model.id) {
+                                llmProgressLabel?.text = when (stage) {
+                                    "Connecting to model host" -> "Connecting to model host…"
+                                    "Verifying model size" -> "Verifying downloaded file size…"
+                                    "Verifying SHA-256 checksum" -> "Verifying SHA-256 checksum…"
+                                    "Installing verified model" -> "Installing verified model…"
+                                    "Installed" -> "Installed · activating local AI runtime…"
+                                    "Failed" -> "Download or verification failed"
+                                    else -> stage
+                                }
+                                llmProgressBar?.isIndeterminate = stage != "Downloading"
                             }
                         }
                     }
@@ -1017,6 +1077,7 @@ class MainActivity : Activity() {
         whisperDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        whisperProgressUiThrottle.set(0L)
         modelInstallStage = "Preparing multilingual Whisper download"
         transcriptionMessage = "Downloading verified multilingual Whisper model. English remains available."
         render()
@@ -1024,15 +1085,17 @@ class MainActivity : Activity() {
             try {
                 whisperModelManager.install(
                     onProgress = { progress ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastWhisperUiUpdateMs >= 1000L || progress.percent >= 100) {
-                            lastWhisperUiUpdateMs = now
+                        if (progress.percent >= 100 || shouldPublishProgress(whisperProgressUiThrottle)) {
                             runOnUiThread {
                                 modelDownloadPercent = progress.percent.coerceIn(0, 100)
                                 whisperDownloadPercent = modelDownloadPercent
                                 whisperDownloadStage = progress.fileName
-                                modelInstallStage = "Whisper · ${progress.fileName}"
-                                if (!isFinishing) render()
+                                modelInstallStage = "Whisper · " + progress.fileName
+                                if (!isFinishing) {
+                                    whisperProgressLabel?.text = progress.fileName + " · " + whisperDownloadPercent + "% overall"
+                                    whisperProgressBar?.isIndeterminate = false
+                                    whisperProgressBar?.progress = whisperDownloadPercent
+                                }
                             }
                         }
                     },
@@ -1040,7 +1103,15 @@ class MainActivity : Activity() {
                         runOnUiThread {
                             modelInstallStage = stage
                             whisperDownloadStage = stage
-                            if (!isFinishing) render()
+                            if (!isFinishing) {
+                                whisperStatusLabel?.text = when {
+                                    stage.contains("verif", true) -> "Verifying model files…"
+                                    stage == "Installed" -> "Installed · about 99 MiB · works offline"
+                                    else -> stage + "…"
+                                }
+                                whisperProgressLabel?.text = stage + " · " + whisperDownloadPercent + "% overall"
+                                whisperProgressBar?.isIndeterminate = true
+                            }
                         }
                     }
                 )
@@ -1076,6 +1147,7 @@ class MainActivity : Activity() {
         englishDownloadBusy = true
         modelDownloadBusy = true
         modelDownloadPercent = 0
+        englishProgressUiThrottle.set(0L)
         englishDownloadedBytes = 0L
         englishTotalBytes = -1L
         modelInstallStage = "Connecting to model host"
@@ -1084,28 +1156,27 @@ class MainActivity : Activity() {
         Thread {
             try {
                 offlineModelManager.install(
-                    onProgress = { percent ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastEnglishUiUpdateMs >= 1000L || percent >= 100) {
-                            lastEnglishUiUpdateMs = now
-                            runOnUiThread {
-                                modelDownloadPercent = percent.coerceIn(0, 100)
-                                englishDownloadPercent = modelDownloadPercent
-                                englishDownloadStage = "Downloading"
-                                modelProgressLabel?.text = modelInstallProgressText()
-                                if (!isFinishing) render()
-                                modelProgressBar?.progress = modelDownloadPercent
-                            }
-                        }
-                    },
+                    // Byte progress is the single source of UI updates. The manager calls both
+                    // callbacks for every chunk; rendering from both creates a backlog of stale
+                    // full-screen rebuilds on slower phones.
+                    onProgress = { _ -> },
                     onBytesProgress = { written, total ->
-                        val now = SystemClock.elapsedRealtime()
-                        if (now - lastEnglishUiUpdateMs >= 1000L || (total > 0L && written >= total)) {
-                            lastEnglishUiUpdateMs = now
+                        if (shouldPublishProgress(englishProgressUiThrottle)) {
                             runOnUiThread {
                                 englishDownloadedBytes = written
                                 englishTotalBytes = total
-                                if (!isFinishing) render()
+                                englishDownloadPercent = if (total > 0L) {
+                                    ((written * 100L) / total).toInt().coerceIn(0, 99)
+                                } else 0
+                                modelDownloadPercent = englishDownloadPercent
+                                if (!isFinishing) {
+                                    englishProgressLabel?.text = englishDownloadStage + " · " + (
+                                        if (total > 0L) formatBytes(written) + " / " + formatBytes(total) + " · " + englishDownloadPercent + "%"
+                                        else formatBytes(written) + " downloaded · total size not reported"
+                                    )
+                                    englishProgressBar?.isIndeterminate = total <= 0L
+                                    if (total > 0L) englishProgressBar?.progress = englishDownloadPercent
+                                }
                             }
                         }
                     },
@@ -1113,8 +1184,21 @@ class MainActivity : Activity() {
                         runOnUiThread {
                             modelInstallStage = stage
                             englishDownloadStage = stage
-                            modelProgressLabel?.text = modelInstallProgressText()
-                            if (!isFinishing) render()
+                            if (!isFinishing) {
+                                englishStatusLabel?.text = when {
+                                    stage.contains("connect", true) -> "Connecting to model host…"
+                                    stage.contains("download", true) -> "Downloading English model…"
+                                    stage.contains("install", true) -> "Installing English model files…"
+                                    stage.contains("verif", true) -> "Verifying English model files…"
+                                    stage == "Installed" -> "Installed · available offline"
+                                    else -> stage
+                                }
+                                englishProgressLabel?.text = stage + " · " + (
+                                    if (englishTotalBytes > 0L) formatBytes(englishDownloadedBytes) + " / " + formatBytes(englishTotalBytes) + " · " + englishDownloadPercent + "%"
+                                    else formatBytes(englishDownloadedBytes) + " downloaded · total size not reported"
+                                )
+                                englishProgressBar?.isIndeterminate = !stage.contains("download", true) || englishTotalBytes <= 0L
+                            }
                         }
                     }
                 )
@@ -1125,8 +1209,6 @@ class MainActivity : Activity() {
                     englishDownloadPercent = 100
                     englishDownloadStage = "Installed"
                     modelInstallStage = "Installed"
-                    modelProgressBar = null
-                    modelProgressLabel = null
                     transcriptionMessage = "English model installed. You can now transcribe with Airplane mode enabled."
                     if (!isFinishing) render()
                 }
@@ -1135,23 +1217,12 @@ class MainActivity : Activity() {
                     englishDownloadBusy = false
                     modelDownloadBusy = whisperDownloadBusy
                     englishDownloadStage = "Failed"
-                    modelProgressBar = null
-                    modelProgressLabel = null
                     modelInstallStage = "Installation failed"
                     transcriptionMessage = "Model installation failed: " + (error.message ?: error.javaClass.simpleName)
                     if (!isFinishing) render()
                 }
             }
         }.start()
-    }
-
-    private fun modelInstallProgressText(): String = when (modelInstallStage) {
-        "Downloading model" -> "Downloading English model — $modelDownloadPercent%"
-        "Installing model files" -> "Installing English model files…"
-        "Verifying model" -> "Verifying model files…"
-        "Installed" -> "English model installed."
-        "Installation failed" -> "Model installation failed."
-        else -> "$modelInstallStage…"
     }
 
     private fun transcribeSession(session: File, audioFiles: List<File>) {
