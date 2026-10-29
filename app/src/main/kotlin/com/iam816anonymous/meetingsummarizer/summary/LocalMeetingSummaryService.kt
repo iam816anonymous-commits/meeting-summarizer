@@ -22,6 +22,40 @@ class LocalMeetingSummaryService(
 ) {
     private val inferenceLock = ReentrantLock()
 
+    data class ActivationResult(val success: Boolean, val message: String, val elapsedMs: Long = 0L)
+
+    /**
+     * Activates a verified artifact by performing real local inference. A downloaded file is
+     * not considered a usable brain until initialization and this smoke test both succeed.
+     */
+    fun activate(model: LocalLlmModel, modelDirectory: File): ActivationResult {
+        val file = model.installedFile(modelDirectory)
+        val verified = try { model.verifyInstalled(modelDirectory) } catch (_: Exception) { false }
+        if (!verified) return ActivationResult(false, "Model size or SHA-256 verification failed. Download it again.")
+        return inferenceLock.withLock {
+            val result = try {
+                runBlocking {
+                    runtime.generate(file, "Reply with exactly this token: MODEL_READY", 512)
+                }
+            } catch (error: Exception) {
+                LocalLlmResult.Failure(error.message ?: "Model activation failed.")
+            }
+            when (result) {
+                is LocalLlmResult.Success -> if (result.text.contains("MODEL_READY", ignoreCase = true)) {
+                    ActivationResult(true, "Model loaded and generation test passed.", result.elapsedMs)
+                } else {
+                    ActivationResult(false, "Model generated text but failed the activation self-test.", result.elapsedMs)
+                }
+                is LocalLlmResult.Unavailable -> ActivationResult(false, result.reason)
+                is LocalLlmResult.Failure -> ActivationResult(false, result.reason)
+            }
+        }
+    }
+
+    fun releaseRuntime() {
+        runBlocking { runtime.close() }
+    }
+
     fun summarize(model: LocalLlmModel, modelDirectory: File, segments: List<TranscriptSegment>, maxInputCharacters: Int = 5_500): MeetingLlmSummaryResult {
         if (segments.isEmpty()) return MeetingLlmSummaryResult.Fallback("There are no transcript segments to summarize.")
         val ordered = segments.filter { it.isFinal && it.text.isNotBlank() }.sortedWith(compareBy<TranscriptSegment> { it.startMs }.thenBy { it.sequence })
