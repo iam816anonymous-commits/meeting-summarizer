@@ -866,6 +866,23 @@ class MainActivity : Activity() {
                                 }
                             }
                         }
+                    },
+                    onStage = { stage ->
+                        runOnUiThread {
+                            llmDownloadStage[model.id] = stage
+                            if (!isFinishing && activeLlmProgressModelId == model.id) {
+                                llmProgressLabel?.text = when (stage) {
+                                    "Connecting to model host" -> "Connecting to model host…"
+                                    "Verifying model size" -> "Verifying downloaded file size…"
+                                    "Verifying SHA-256 checksum" -> "Verifying SHA-256 checksum…"
+                                    "Installing verified model" -> "Installing verified model…"
+                                    "Installed" -> "Installed · activating local AI runtime…"
+                                    "Failed" -> "Download or verification failed"
+                                    else -> stage
+                                }
+                                llmProgressBar?.isIndeterminate = stage != "Downloading"
+                            }
+                        }
                     }
                 )
             }
