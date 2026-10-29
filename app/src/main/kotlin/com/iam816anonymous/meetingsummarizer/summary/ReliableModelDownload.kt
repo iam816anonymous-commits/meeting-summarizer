@@ -84,8 +84,21 @@ internal object ReliableModelDownload {
                     connection = null
                     continue
                 }
+                if (code == 416 && offset > 0L) {
+                    // The partial file no longer matches the server's range. Discard it and
+                    // retry from byte zero instead of making every future attempt fail.
+                    if (!partialFile.delete()) {
+                        throw PermanentDownloadException("The server rejected resume and the partial file could not be cleared.")
+                    }
+                    throw RetryableDownloadException("The server rejected the resume range; restarting the download.")
+                }
                 if (code !in 200..299) {
-                    if (code == 408 || code == 429 || code in 500..599) throw RetryableHttpException("Model host returned HTTP $code.")
+                    // Hugging Face may redirect to short-lived signed Xet URLs. A 401/403 from
+                    // that redirected host can mean the signed URL expired; retry from the
+                    // original resolve URL to obtain a fresh signed URL.
+                    if (code == 401 || code == 403 || code == 408 || code == 429 || code in 500..599) {
+                        throw RetryableHttpException("Model host returned HTTP $code.")
+                    }
                     throw PermanentDownloadException("Model host returned HTTP $code.")
                 }
                 val append = offset > 0L && code == HttpURLConnection.HTTP_PARTIAL

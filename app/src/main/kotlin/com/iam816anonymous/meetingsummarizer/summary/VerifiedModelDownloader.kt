@@ -53,7 +53,7 @@ class VerifiedModelDownloader {
                 expectedBytes = if (artifact.sizeIsExact) artifact.expectedBytes else -1L,
                 maxBytes = artifact.expectedBytes,
                 allowedExactHosts = emptySet(),
-                allowedHostSuffixes = setOf(".huggingface.co", ".xethub.hf.co"),
+                allowedHostSuffixes = setOf(".huggingface.co", ".hf.co", ".xethub.hf.co"),
                 onProgress = { progress -> onProgress(progress.writtenBytes, progress.totalBytes) }
             )
             if (partial.length() <= 0L || partial.length() > artifact.expectedBytes ||
@@ -97,7 +97,8 @@ class VerifiedModelDownloader {
         val url = URL(value)
         val host = url.host.lowercase()
         url.protocol.equals("https", true) &&
-            (host == "huggingface.co" || host.endsWith(".huggingface.co") || host.endsWith(".xethub.hf.co"))
+            (host == "huggingface.co" || host.endsWith(".huggingface.co") ||
+                host == "hf.co" || host.endsWith(".hf.co") || host.endsWith(".xethub.hf.co"))
     }.getOrDefault(false)
 
     companion object {

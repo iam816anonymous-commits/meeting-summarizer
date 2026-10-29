@@ -107,6 +107,9 @@ class MainActivity : Activity() {
     private var whisperDownloadStage = "Ready"
     private val llmDownloadBusy = mutableSetOf<String>()
     private val llmDownloadPercent = mutableMapOf<String, Int>()
+    private val llmDownloadWrittenBytes = mutableMapOf<String, Long>()
+    private val llmDownloadTotalBytes = mutableMapOf<String, Long>()
+    private val llmDownloadLastUiUpdateMs = mutableMapOf<String, Long>()
     private val llmDownloadStage = mutableMapOf<String, String>()
     private val llmTestBusy = mutableSetOf<String>()
     private var llmStatusMessage: String? = null
@@ -681,9 +684,26 @@ class MainActivity : Activity() {
             }, 12f, if (isActiveBrain) COLOR_PRIMARY_DARK else COLOR_MUTED, true)
             if (model.id in llmDownloadBusy) {
                 addSpace(llmCard, 8)
-                addText(llmCard, (llmDownloadStage[model.id] ?: "Connecting") + " · " + (llmDownloadPercent[model.id] ?: 0) + "%", 12f, COLOR_PRIMARY_DARK, true)
-                if ((llmDownloadStage[model.id] ?: "Connecting") == "Connecting") llmCard.addView(ProgressBar(this).apply { isIndeterminate = true }, matchWrapParams())
-                llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = llmDownloadPercent[model.id] ?: 0 }, matchWrapParams())
+                val stage = llmDownloadStage[model.id] ?: "Connecting"
+                val written = llmDownloadWrittenBytes[model.id] ?: 0L
+                val total = llmDownloadTotalBytes[model.id] ?: -1L
+                val progressText = if (total > 0L) {
+                    "$stage · ${formatBytes(written)} / ${formatBytes(total)} · ${llmDownloadPercent[model.id] ?: 0}%"
+                } else if (written > 0L) {
+                    "$stage · ${formatBytes(written)} downloaded · waiting for server size"
+                } else {
+                    "$stage · establishing a secure connection"
+                }
+                addText(llmCard, progressText, 12f, COLOR_PRIMARY_DARK, true)
+                llmCard.addView(ProgressBar(this).apply {
+                    isIndeterminate = total <= 0L
+                }, matchWrapParams())
+                if (total > 0L) {
+                    llmCard.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                        max = 100
+                        progress = llmDownloadPercent[model.id] ?: 0
+                    }, matchWrapParams())
+                }
                 addText(llmCard, "Downloading and verifying locally. The button is disabled until the result is known.", 11f, COLOR_MUTED)
             } else if (installed) {
                 addSpace(llmCard, 8)
@@ -784,6 +804,9 @@ class MainActivity : Activity() {
         if (modelDownloadBusy || englishDownloadBusy || whisperDownloadBusy || transcriptionBusy || llmDownloadBusy.isNotEmpty()) return
         if (!llmDownloadBusy.add(model.id)) return
         llmDownloadPercent[model.id] = 0
+        llmDownloadWrittenBytes[model.id] = 0L
+        llmDownloadTotalBytes[model.id] = -1L
+        llmDownloadLastUiUpdateMs[model.id] = 0L
         llmDownloadStage[model.id] = "Connecting"
         llmStatusMessage = "Downloading " + model.displayName + ". You can navigate away; progress is retained while this Activity remains alive."
         render()
@@ -797,10 +820,16 @@ class MainActivity : Activity() {
                     userOptedIn = true,
                     onProgress = { written, total ->
                         val percent = if (total > 0L) ((written * 100L) / total).toInt().coerceIn(0, 99) else 0
-                        if (percent != llmDownloadPercent[model.id]) {
+                        val now = SystemClock.elapsedRealtime()
+                        val changedPercent = percent != llmDownloadPercent[model.id]
+                        val shouldRefresh = changedPercent || now - (llmDownloadLastUiUpdateMs[model.id] ?: 0L) >= 500L
+                        if (shouldRefresh) {
                             runOnUiThread {
+                                llmDownloadWrittenBytes[model.id] = written
+                                llmDownloadTotalBytes[model.id] = total
                                 llmDownloadPercent[model.id] = percent
-                                llmDownloadStage[model.id] = "Downloading and verifying"
+                                llmDownloadLastUiUpdateMs[model.id] = SystemClock.elapsedRealtime()
+                                llmDownloadStage[model.id] = "Downloading"
                                 if (!isFinishing) render()
                             }
                         }
