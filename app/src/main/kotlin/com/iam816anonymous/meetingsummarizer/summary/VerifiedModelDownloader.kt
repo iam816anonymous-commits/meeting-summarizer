@@ -45,43 +45,39 @@ class VerifiedModelDownloader {
 
         val destination = File(modelDirectory, artifact.fileName)
         val partial = File(modelDirectory, artifact.fileName + ".part")
-        var connection: HttpURLConnection? = null
         try {
             if (!modelDirectory.exists() && !modelDirectory.mkdirs()) throw IllegalStateException("Could not create model directory.")
-            connection = openFollowingRedirects(artifact.downloadUrl)
-            if (connection.responseCode !in 200..299) throw IllegalStateException("Model server returned HTTP ${connection.responseCode}.")
-            val advertisedLength = connection.contentLengthLong
-            if (artifact.sizeIsExact && advertisedLength > 0L && advertisedLength != artifact.expectedBytes) throw IllegalStateException("Artifact size does not match the catalog.")
+            ReliableModelDownload.download(
+                initialUrl = artifact.downloadUrl,
+                partialFile = partial,
+                expectedBytes = if (artifact.sizeIsExact) artifact.expectedBytes else -1L,
+                maxBytes = artifact.expectedBytes,
+                allowedExactHosts = emptySet(),
+                allowedHostSuffixes = setOf(".huggingface.co", ".xethub.hf.co"),
+                onProgress = { progress -> onProgress(progress.writtenBytes, progress.totalBytes) }
+            )
             val digest = MessageDigest.getInstance("SHA-256")
-            var written = 0L
-            connection.inputStream.use { input ->
-                partial.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        written += count
-                        if (written > artifact.expectedBytes || written > MAX_MODEL_BYTES) throw IllegalStateException("Model download exceeded the catalog size bound.")
-                        digest.update(buffer, 0, count)
-                        output.write(buffer, 0, count)
-                        onProgress(written, artifact.expectedBytes)
-                    }
+            partial.inputStream().buffered().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
                 }
             }
-            if (written <= 0L || (artifact.sizeIsExact && written != artifact.expectedBytes)) throw IllegalStateException("Model download was incomplete or its exact size did not match the catalog.")
             val hash = digest.digest().joinToString("") { "%02x".format(it) }
-            if (!hash.equals(artifact.sha256, true)) throw IllegalStateException("Model checksum verification failed.")
+            if (!hash.equals(artifact.sha256, true)) {
+                partial.delete()
+                throw IllegalStateException("Model checksum verification failed. The partial download was discarded; please retry.")
+            }
             if (destination.exists() && !destination.delete()) throw IllegalStateException("Could not replace the previous model.")
             if (!partial.renameTo(destination)) throw IllegalStateException("Could not finalize installed model.")
             ModelInstallResult.Installed(destination)
         } catch (error: Exception) {
-            partial.delete()
+            // Keep a partial only after retryable transport failure so the next attempt can resume.
+            if (error.message?.startsWith("Model download failed after") != true) partial.delete()
             ModelInstallResult.Rejected(error.message ?: "Model download failed.")
-        } finally {
-            connection?.disconnect()
         }
-    }
-
     private fun openFollowingRedirects(initialUrl: String): HttpURLConnection {
         var currentUrl = initialUrl
         repeat(MAX_REDIRECTS + 1) { hop ->

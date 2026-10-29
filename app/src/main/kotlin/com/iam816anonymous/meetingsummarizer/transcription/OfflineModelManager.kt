@@ -43,10 +43,12 @@ class OfflineModelManager(context: Context) {
         if (!root.exists() && !root.mkdirs()) throw IllegalStateException("Could not create the private model directory.")
         val archive = File(root, "english-model.tar.bz2.part")
         val extraction = File(root, "english-model-extracting")
-        runCatching { archive.delete() }
+        // Retain a bounded partial archive so a later retry can resume after a network drop.
+        if (archive.length() > MAX_ARCHIVE_BYTES) runCatching { archive.delete() }
         deleteRecursively(extraction)
         if (!extraction.mkdirs()) throw IllegalStateException("Could not create a temporary model directory.")
 
+        var keepArchiveForResume = false
         try {
             onStage("Connecting to model host")
             onStage("Downloading model")
@@ -74,44 +76,31 @@ class OfflineModelManager(context: Context) {
             onProgress(100)
             onStage("Installed")
             return destination
+        } catch (error: Exception) {
+            keepArchiveForResume = error.message?.startsWith("Model download failed after") == true
+            throw error
         } finally {
-            runCatching { archive.delete() }
+            if (!keepArchiveForResume) runCatching { archive.delete() }
             deleteRecursively(extraction)
         }
     }
 
     private fun download(destination: File, onProgress: (Int) -> Unit, onBytesProgress: (Long, Long) -> Unit) {
-        val connection = (URL(MODEL_ARCHIVE_URL).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 45_000
-            requestMethod = "GET"
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "MeetingSummarizer-Android")
-        }
-        try {
-            connection.connect()
-            if (connection.responseCode !in 200..299) {
-                throw IllegalStateException("Model download failed with HTTP ${connection.responseCode}.")
-            }
-            val expected = connection.contentLengthLong
-            var copied = 0L
-            connection.inputStream.use { input ->
-                destination.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        copied += count
-                        onBytesProgress(copied, expected)
-                        if (expected > 0L) onProgress(((copied * 100L) / expected).toInt().coerceIn(0, 99))
-                    }
+        com.iam816anonymous.meetingsummarizer.summary.ReliableModelDownload.download(
+            initialUrl = MODEL_ARCHIVE_URL,
+            partialFile = destination,
+            expectedBytes = -1L,
+            maxBytes = MAX_ARCHIVE_BYTES,
+            allowedExactHosts = setOf("github.com"),
+            allowedHostSuffixes = setOf(".githubusercontent.com"),
+            onProgress = { progress ->
+                onBytesProgress(progress.writtenBytes, progress.totalBytes)
+                if (progress.totalBytes > 0L) {
+                    onProgress(((progress.writtenBytes * 100L) / progress.totalBytes).toInt().coerceIn(0, 99))
                 }
             }
-            if (destination.length() == 0L) throw IllegalStateException("The model download was empty.")
-        } finally {
-            connection.disconnect()
-        }
+        )
+        if (destination.length() == 0L) throw IllegalStateException("The model download was empty.")
     }
 
     private fun extractSafely(archive: File, destination: File) {
@@ -172,6 +161,7 @@ class OfflineModelManager(context: Context) {
         private const val TOKENS = "tokens.txt"
         private const val MIN_INSTALL_SPACE_BYTES = 150L * 1024L * 1024L
         private const val MAX_EXTRACTED_BYTES = 500L * 1024L * 1024L
+        private const val MAX_ARCHIVE_BYTES = 200L * 1024L * 1024L
         private const val MODEL_ARCHIVE_URL =
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-small-en-2023-06-26.tar.bz2"
     }
