@@ -25,3 +25,10 @@ Phase 10 (reliability, privacy and performance hardening), specifically the mode
 
 ## Limits
 The app cannot prove host reachability without testing the user's actual network. Physical-device validation remains pending.
+
+## Follow-up: resource-gated model downloads and byte progress
+
+- Model download eligibility is now a hard gate based on Android API, total RAM, currently available RAM, free storage and selected language. Ineligible cards explain why and do not show a Download button; the action repeats the check to avoid stale-UI bypass.
+- The English model installer now forwards byte callbacks to the UI and displays downloaded/total bytes when available, otherwise downloaded bytes with total size explicitly marked unknown.
+- These thresholds are conservative screening heuristics, not runtime guarantees.
+- Still pending: pinned SHA-256 verification for the English archive, resumable downloads/retry, and physical-device tests for host reachability, complete install, and actual inference.

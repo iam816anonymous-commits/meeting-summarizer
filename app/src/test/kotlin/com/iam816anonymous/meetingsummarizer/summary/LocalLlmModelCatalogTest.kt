@@ -77,6 +77,15 @@ class LocalLlmModelCatalogTest {
         assertTrue(storageConstrained.none { it.tierLabel == "Large" || it.tierLabel == "Very large" })
     }
 
+    @Test fun downloadResourceRequirementsAreExplicitlyModeled() {
+        LocalLlmModelCatalog.models.forEach { model ->
+            assertTrue(model.minTotalRamBytes > 0L)
+            assertTrue(model.minAvailableRamBytes > 0L)
+            assertTrue(model.estimatedPeakRamBytes >= model.minAvailableRamBytes)
+            assertTrue(model.minFreeStorageBytes >= model.expectedBytes)
+        }
+    }
+
     @Test fun installedCheckRejectsFilesOutsideCatalogSizeBounds() {
         val model = LocalLlmModelCatalog.models.first()
         val directory = java.nio.file.Files.createTempDirectory("llm-catalog-test").toFile()

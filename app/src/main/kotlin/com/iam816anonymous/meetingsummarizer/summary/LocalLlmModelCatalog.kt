@@ -78,7 +78,7 @@ object LocalLlmModelCatalog {
             minTotalRamBytes = 4L * GB,
             minAvailableRamBytes = 1800L * MB,
             minFreeStorageBytes = 800L * MB,
-            estimatedPeakRamBytes = 1700L * MB
+            estimatedPeakRamBytes = 1900L * MB
         ),
         LocalLlmModel(
             id = "lfm2-700m-int8",
